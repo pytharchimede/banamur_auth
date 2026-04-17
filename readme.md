@@ -66,6 +66,7 @@ banamur_auth/
 |-- api/
 |   |-- .htaccess
 |   `-- index.php
+|-- API.md
 |-- controller/
 |   |-- AuthController.php
 |   |-- RoleController.php
@@ -366,147 +367,32 @@ Exemples :
 - echec de connexion
 - deconnexion
 
-## 10. Les routes API disponibles
+## 10. Documentation technique de l'API
 
-Toutes les routes repondent en JSON.
+La documentation technique complete des endpoints a ete deplacee dans un fichier dedie pour garder ce README plus lisible.
 
-### Routes publiques
+Tu y trouveras :
 
-Ces routes ne demandent pas de token :
+- la base URL
+- le format des reponses JSON
+- le catalogue complet des endpoints
+- le detail de chaque route
+- les permissions requises
+- les exemples de body et les erreurs frequentes
+- le rappel sur l'autorisation
 
-- `GET /api/health`
-- `POST /api/auth/register`
-- `POST /api/auth/login`
+Fichier a consulter :
 
-### Routes protegees par token
+- `API.md`
 
-Ces routes demandent un header `Authorization: Bearer TON_TOKEN` :
-
-- `POST /api/auth/logout`
-- `GET /api/auth/me`
-
-### CRUD utilisateurs
-
-Routes protegees avec permissions :
-
-- `GET /api/users` demande `user.read`
-- `GET /api/users/{id}` demande `user.read`
-- `POST /api/users` demande `user.create`
-- `PUT /api/users/{id}` demande `user.update`
-- `DELETE /api/users/{id}` demande `user.delete`
-- `PUT /api/users/{id}/roles` demande `role.assign`
-
-### CRUD roles
-
-Routes protegees avec permissions :
-
-- `GET /api/roles` demande `role.read`
-- `GET /api/roles/{id}` demande `role.read`
-- `POST /api/roles` demande `role.create`
-- `PUT /api/roles/{id}` demande `role.update`
-- `DELETE /api/roles/{id}` demande `role.delete`
-- `PUT /api/roles/{id}/permissions` demande `permission.assign`
-- `GET /api/permissions` demande `permission.read`
-
-## 11. Comment fonctionne l'autorisation
-
-L'autorisation est geree par `AuthorizationMiddleware`.
-
-Son travail est simple :
-
-1. lire le token Bearer
-2. demander a `AuthService` d'identifier l'utilisateur
-3. recuperer ses roles et ses permissions
-4. verifier que la route demandee est autorisee
-
-Regle speciale :
-
-si l'utilisateur a le role `SUPER_ADMIN`, il passe partout.
-
-## 12. Exemples de reponses JSON
-
-### `GET /api/health`
-
-```json
-{
-  "success": true,
-  "data": {
-    "message": "API Banamur Auth disponible."
-  }
-}
-```
-
-### `POST /api/auth/register`
-
-Body JSON :
-
-```json
-{
-  "username": "alice",
-  "email": "alice@example.com",
-  "password": "motdepasse123",
-  "first_name": "Alice",
-  "last_name": "Banamur"
-}
-```
-
-### `POST /api/auth/login`
-
-Body JSON :
-
-```json
-{
-  "identifier": "alice@example.com",
-  "password": "motdepasse123"
-}
-```
-
-Reponse typique :
-
-```json
-{
-  "success": true,
-  "data": {
-    "message": "Connexion reussie.",
-    "token": "TOKEN_ICI",
-    "token_type": "Bearer",
-    "expires_at": "2026-04-18 12:00:00",
-    "user": {
-      "id": 1,
-      "username": "alice",
-      "email": "alice@example.com",
-      "roles": [
-        {
-          "id": 3,
-          "name": "Utilisateur",
-          "code": "USER",
-          "description": "Acces standard utilisateur"
-        }
-      ]
-    }
-  }
-}
-```
-
-### Exemple d'erreur JSON
-
-```json
-{
-  "success": false,
-  "error": {
-    "code": "forbidden_permission",
-    "message": "Permission insuffisante pour acceder a cette ressource."
-  }
-}
-```
-
-## 13. Comment tester rapidement avec Postman ou curl
+## 11. Comment tester rapidement avec Postman ou curl
 
 ### Collection Postman fournie
 
 Une collection Postman de base est disponible dans le projet :
 
 - `postman/banamur_auth.postman_collection.json`
+- `postman/banamur_auth.postman_environment.json`
 
 Cette collection contient les dossiers suivants :
 
@@ -521,16 +407,61 @@ Elle contient aussi des variables de collection :
 - `token`
 - `userId`
 - `roleId`
+- `adminToken`
+- `adminIdentifier`
+- `adminPassword`
+- `userIdentifier`
+- `userPassword`
+
+### Utilisation manuelle avec Postman
+
+La collection sert a interroger les API manuellement, route par route.
+
+Elle ne doit pas etre vue comme une suite de tests automatique.
+
+Le but est surtout de :
+
+- envoyer facilement une requete
+- modifier le body JSON a la main
+- changer les variables d'environnement
+- lire la reponse JSON calmement
+- comprendre comment se comporte l'API
+
+### Prerequis pour utiliser toutes les requetes
+
+Pour les routes publiques et utilisateur simple :
+
+- aucun prerequis complexe
+
+Pour les routes d'administration :
+
+- il faut un utilisateur ayant le role `ADMIN` ou `SUPER_ADMIN`
+- il faut renseigner `adminIdentifier` et `adminPassword` dans l'environnement Postman
+
+### Ordre conseille pour interroger les API manuellement
+
+1. importe la collection et l'environnement
+2. choisis l'environnement `Banamur Auth Local`
+3. lance `Health > Health Check`
+4. modifie si besoin les variables `userIdentifier` et `userPassword`
+5. lance `Auth > Register User`
+6. lance `Auth > Login User`
+7. copie le token retourne dans la variable `token` si necessaire
+8. lance `Auth > Me`
+9. si un admin existe, lance `Auth > Login Admin`
+10. copie le token admin dans `adminToken`
+11. interroge ensuite les routes `Users` et `Roles`
 
 Conseil de depart :
 
 1. importe la collection dans Postman
-2. verifie la variable `baseUrl`
-3. lance `Health`
-4. lance `Auth > Register`
-5. lance `Auth > Login`
-6. la collection enregistre automatiquement le `token`
-7. utilise ensuite les routes protegees
+2. importe aussi l'environnement Postman
+3. verifie la variable `baseUrl`
+4. lance `Health > Health Check`
+5. lance `Auth > Register User`
+6. lance `Auth > Login User`
+7. renseigne manuellement `token` ou `adminToken` apres login si necessaire
+8. utilise ensuite les routes protegees
 
 Attention :
 
@@ -574,7 +505,7 @@ curl http://localhost/banamur_auth/api/auth/me \
   -H "Authorization: Bearer TON_TOKEN"
 ```
 
-## 14. Premier administrateur : comment faire
+## 12. Premier administrateur : comment faire
 
 Comme aucun compte `ADMIN` n'est cree automatiquement, il faut faire une petite manipulation au debut.
 
@@ -599,7 +530,7 @@ les identifiants `1` et `2` ci-dessus sont seulement des exemples.
 
 Il faut verifier les vraies valeurs dans ta base.
 
-## 15. Comment lire le code quand on debute
+## 13. Comment lire le code quand on debute
 
 Si tu veux comprendre le projet sans te perdre, lis les fichiers dans cet ordre :
 
@@ -618,7 +549,7 @@ Pourquoi cet ordre ?
 
 Parce qu'il suit exactement le chemin d'une requete HTTP dans l'application.
 
-## 16. Bonnes pratiques deja appliquees dans le projet
+## 14. Bonnes pratiques deja appliquees dans le projet
 
 - les mots de passe sont hashes avec `password_hash()`
 - la verification du mot de passe utilise `password_verify()`
@@ -628,7 +559,7 @@ Parce qu'il suit exactement le chemin d'une requete HTTP dans l'application.
 - les droits sont controles par permissions
 - les erreurs metier sont centralisees avec `ApiException`
 
-## 17. Limitations actuelles
+## 15. Limitations actuelles
 
 Le projet fonctionne deja, mais il reste des points a garder en tete :
 
@@ -638,7 +569,7 @@ Le projet fonctionne deja, mais il reste des points a garder en tete :
 - il n'y a pas encore de mecanisme de reset mot de passe expose en API
 - il n'y a pas encore de pagination sur les listes
 
-## 18. Si tu dois ajouter une nouvelle fonctionnalite
+## 16. Si tu dois ajouter une nouvelle fonctionnalite
 
 Exemple : tu veux ajouter une route `GET /api/profile`.
 
@@ -651,7 +582,7 @@ Ordre conseille :
 5. proteger la route avec `authorizeRoute(...)` si besoin
 6. tester avec Postman
 
-## 19. Resume ultra simple
+## 17. Resume ultra simple
 
 Si tu dois retenir seulement l'essentiel, retiens ceci :
 
@@ -663,7 +594,7 @@ Si tu dois retenir seulement l'essentiel, retiens ceci :
 - le repository fait les requetes SQL
 - la reponse repart en JSON
 
-## 20. Prochaine amelioration utile
+## 18. Prochaine amelioration utile
 
 Pour rendre le projet encore plus simple a prendre en main, les prochaines evolutions utiles seraient :
 
