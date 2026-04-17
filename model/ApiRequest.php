@@ -1,20 +1,26 @@
 <?php
 
+require_once __DIR__ . '/ApiException.php';
+
+use ApiException;
+
 class ApiRequest
 {
     private $method;
     private $path;
     private $body;
+    private $query;
     private $headers;
     private $context;
     private $routeParams = [];
     private $authenticatedIdentity = null;
 
-    public function __construct($method, $path, array $body, array $headers, array $context)
+    public function __construct($method, $path, array $body, array $query, array $headers, array $context)
     {
         $this->method = strtoupper((string) $method);
         $this->path = $path;
         $this->body = $body;
+        $this->query = $query;
         $this->headers = $headers;
         $this->context = $context;
     }
@@ -27,7 +33,7 @@ class ApiRequest
         if ($rawBody !== false && $rawBody !== '') {
             $decoded = json_decode($rawBody, true);
             if (!is_array($decoded)) {
-                throw new \ApiException('Le corps JSON est invalide.', 400, 'invalid_json');
+                throw new ApiException('Le corps JSON est invalide.', 400, 'invalid_json');
             }
 
             $body = $decoded;
@@ -37,6 +43,7 @@ class ApiRequest
             $_SERVER['REQUEST_METHOD'] ?? 'GET',
             $path,
             $body,
+            $_GET,
             self::extractHeaders(),
             [
                 'ip_address' => $_SERVER['REMOTE_ADDR'] ?? null,
@@ -65,6 +72,16 @@ class ApiRequest
         return array_key_exists($key, $this->body) ? $this->body[$key] : $default;
     }
 
+    public function getQueryParam($key, $default = null)
+    {
+        return array_key_exists($key, $this->query) ? $this->query[$key] : $default;
+    }
+
+    public function getQueryParams()
+    {
+        return $this->query;
+    }
+
     public function setRouteParams(array $routeParams)
     {
         $this->routeParams = $routeParams;
@@ -90,7 +107,7 @@ class ApiRequest
     {
         $header = $this->getHeader('authorization', '');
         if (!is_string($header) || stripos($header, 'Bearer ') !== 0) {
-            throw new \ApiException('Header Authorization Bearer requis.', 401, 'missing_authorization_header');
+            throw new ApiException('Header Authorization Bearer requis.', 401, 'missing_authorization_header');
         }
 
         return trim(substr($header, 7));

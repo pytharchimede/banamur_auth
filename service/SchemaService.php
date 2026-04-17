@@ -48,12 +48,14 @@ class SchemaService
             ['Creer les utilisateurs', 'user.create', 'Creer un utilisateur', 'users'],
             ['Modifier les utilisateurs', 'user.update', 'Mettre a jour un utilisateur', 'users'],
             ['Supprimer les utilisateurs', 'user.delete', 'Supprimer un utilisateur', 'users'],
+            ['Lire les logs', 'log.read', 'Consulter les journaux de securite', 'logs'],
             ['Assigner les roles', 'role.assign', 'Associer des roles a un utilisateur', 'roles'],
             ['Lire les roles', 'role.read', 'Consulter les roles', 'roles'],
             ['Creer les roles', 'role.create', 'Creer un role', 'roles'],
             ['Modifier les roles', 'role.update', 'Mettre a jour un role', 'roles'],
             ['Supprimer les roles', 'role.delete', 'Supprimer un role', 'roles'],
             ['Lire les permissions', 'permission.read', 'Consulter les permissions', 'permissions'],
+            ['Modifier les permissions', 'permission.update', 'Mettre a jour les permissions', 'permissions'],
             ['Assigner les permissions', 'permission.assign', 'Associer des permissions a un role', 'permissions'],
         ];
 

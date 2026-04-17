@@ -42,6 +42,42 @@ class UserRepository
         }, $rows);
     }
 
+    public function findPaginated(array $filters)
+    {
+        $page = max(1, (int) ($filters['page'] ?? 1));
+        $perPage = max(1, min(100, (int) ($filters['per_page'] ?? 10)));
+        $offset = ($page - 1) * $perPage;
+        $query = $this->buildFilteredQuery($filters);
+
+        $countStatement = $this->connection->prepare('SELECT COUNT(*) FROM users u' . $query['where']);
+        $countStatement->execute($query['params']);
+        $total = (int) $countStatement->fetchColumn();
+
+        $statement = $this->connection->prepare(
+            'SELECT u.* FROM users u' . $query['where'] . ' ORDER BY u.created_at DESC, u.id DESC LIMIT :limit OFFSET :offset'
+        );
+
+        foreach ($query['params'] as $key => $value) {
+            $statement->bindValue($key, $value);
+        }
+
+        $statement->bindValue(':limit', $perPage, PDO::PARAM_INT);
+        $statement->bindValue(':offset', $offset, PDO::PARAM_INT);
+        $statement->execute();
+
+        return [
+            'items' => array_map(function ($row) {
+                return \User::fromArray($row);
+            }, $statement->fetchAll()),
+            'pagination' => [
+                'page' => $page,
+                'per_page' => $perPage,
+                'total' => $total,
+                'total_pages' => $total > 0 ? (int) ceil($total / $perPage) : 0,
+            ],
+        ];
+    }
+
     public function usernameExists($username, $excludeId = null)
     {
         $sql = 'SELECT id FROM users WHERE username = :username';
@@ -254,5 +290,39 @@ class UserRepository
             $this->connection->rollBack();
             throw $exception;
         }
+    }
+
+    private function buildFilteredQuery(array $filters)
+    {
+        $conditions = [];
+        $params = [];
+        $search = trim((string) ($filters['search'] ?? ''));
+        $status = trim((string) ($filters['status'] ?? ''));
+        $roleCode = trim((string) ($filters['role_code'] ?? ''));
+
+        if ($search !== '') {
+            $conditions[] = '(u.username LIKE :search OR u.email LIKE :search OR COALESCE(u.first_name, \'\') LIKE :search OR COALESCE(u.last_name, \'\') LIKE :search OR COALESCE(u.phone, \'\') LIKE :search)';
+            $params[':search'] = '%' . $search . '%';
+        }
+
+        if ($status !== '') {
+            $conditions[] = 'u.status = :status';
+            $params[':status'] = $status;
+        }
+
+        if ($roleCode !== '') {
+            $conditions[] = 'EXISTS (
+                SELECT 1
+                FROM user_roles ur_filter
+                INNER JOIN roles r_filter ON r_filter.id = ur_filter.role_id
+                WHERE ur_filter.user_id = u.id AND r_filter.code = :role_code
+            )';
+            $params[':role_code'] = $roleCode;
+        }
+
+        return [
+            'where' => empty($conditions) ? '' : ' WHERE ' . implode(' AND ', $conditions),
+            'params' => $params,
+        ];
     }
 }

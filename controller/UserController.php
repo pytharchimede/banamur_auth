@@ -16,7 +16,13 @@ class UserController
     {
         return [
             'status' => 200,
-            'body' => $this->userService->listUsers(),
+            'body' => $this->userService->listUsers([
+                'search' => $request->getQueryParam('search'),
+                'status' => $request->getQueryParam('status'),
+                'role_code' => $request->getQueryParam('role_code'),
+                'page' => $request->getQueryParam('page'),
+                'per_page' => $request->getQueryParam('per_page'),
+            ]),
         ];
     }
 

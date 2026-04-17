@@ -16,7 +16,11 @@ class RoleController
     {
         return [
             'status' => 200,
-            'body' => $this->roleService->listRoles(),
+            'body' => $this->roleService->listRoles([
+                'search' => $request->getQueryParam('search'),
+                'page' => $request->getQueryParam('page'),
+                'per_page' => $request->getQueryParam('per_page'),
+            ]),
         ];
     }
 
@@ -57,14 +61,6 @@ class RoleController
         return [
             'status' => 200,
             'body' => $this->roleService->syncRolePermissions($request->getRouteParam('id'), $request->getBody()),
-        ];
-    }
-
-    public function permissions(\ApiRequest $request)
-    {
-        return [
-            'status' => 200,
-            'body' => $this->roleService->listPermissions(),
         ];
     }
 }

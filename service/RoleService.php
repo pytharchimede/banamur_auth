@@ -1,8 +1,13 @@
 <?php
 
 require_once __DIR__ . '/../model/ApiException.php';
+require_once __DIR__ . '/../model/Role.php';
+require_once __DIR__ . '/../model/Permission.php';
 require_once __DIR__ . '/../repository/RoleRepository.php';
 require_once __DIR__ . '/../repository/PermissionRepository.php';
+
+use ApiException;
+use Role;
 
 class RoleService
 {
@@ -12,15 +17,29 @@ class RoleService
 
     public function __construct()
     {
-        $this->roleRepository = new \RoleRepository();
-        $this->permissionRepository = new \PermissionRepository();
+        $this->roleRepository = new RoleRepository();
+        $this->permissionRepository = new PermissionRepository();
     }
 
-    public function listRoles()
+    public function listRoles(array $filters = [])
     {
+        if ($this->shouldUsePaginatedList($filters)) {
+            $result = $this->roleRepository->findPaginated($filters);
+
+            return [
+                'items' => array_map(function (Role $role) {
+                    return $this->buildRolePayload($role);
+                }, $result['items']),
+                'pagination' => $result['pagination'],
+                'filters' => [
+                    'search' => trim((string) ($filters['search'] ?? '')),
+                ],
+            ];
+        }
+
         $roles = $this->roleRepository->findAll();
 
-        return array_map(function (\Role $role) {
+        return array_map(function (Role $role) {
             return $this->buildRolePayload($role);
         }, $roles);
     }
@@ -38,11 +57,11 @@ class RoleService
         $code = strtoupper(trim((string) ($payload['code'] ?? '')));
 
         if ($name === '' || $code === '') {
-            throw new \ApiException('Les champs name et code sont obligatoires.', 422, 'validation_error');
+            throw new ApiException('Les champs name et code sont obligatoires.', 422, 'validation_error');
         }
 
         if ($this->roleRepository->codeExists($code)) {
-            throw new \ApiException('Ce code role existe deja.', 409, 'role_code_exists');
+            throw new ApiException('Ce code role existe deja.', 409, 'role_code_exists');
         }
 
         $role = $this->roleRepository->create([
@@ -65,15 +84,15 @@ class RoleService
         $code = strtoupper(trim((string) ($payload['code'] ?? $existingRole->getCode())));
 
         if ($name === '' || $code === '') {
-            throw new \ApiException('Les champs name et code sont obligatoires.', 422, 'validation_error');
+            throw new ApiException('Les champs name et code sont obligatoires.', 422, 'validation_error');
         }
 
         if ($this->roleRepository->codeExists($code, $existingRole->getId())) {
-            throw new \ApiException('Ce code role existe deja.', 409, 'role_code_exists');
+            throw new ApiException('Ce code role existe deja.', 409, 'role_code_exists');
         }
 
         if (in_array($existingRole->getCode(), $this->protectedRoleCodes, true) && $existingRole->getCode() !== $code) {
-            throw new \ApiException('Le code d\'un role systeme ne peut pas etre modifie.', 422, 'protected_role');
+            throw new ApiException('Le code d\'un role systeme ne peut pas etre modifie.', 422, 'protected_role');
         }
 
         $role = $this->roleRepository->update($existingRole->getId(), [
@@ -93,12 +112,12 @@ class RoleService
     {
         $role = $this->requireRole($roleId);
         if (in_array($role->getCode(), $this->protectedRoleCodes, true)) {
-            throw new \ApiException('Ce role systeme ne peut pas etre supprime.', 422, 'protected_role');
+            throw new ApiException('Ce role systeme ne peut pas etre supprime.', 422, 'protected_role');
         }
 
         $deleted = $this->roleRepository->delete($role->getId());
         if (!$deleted) {
-            throw new \ApiException('Suppression du role impossible.', 500, 'delete_failed');
+            throw new ApiException('Suppression du role impossible.', 500, 'delete_failed');
         }
 
         return [
@@ -114,16 +133,7 @@ class RoleService
         return $this->buildRolePayload($this->requireRole($role->getId()));
     }
 
-    public function listPermissions()
-    {
-        $permissions = $this->permissionRepository->findAll();
-
-        return array_map(function (\Permission $permission) {
-            return $permission->toSafeArray();
-        }, $permissions);
-    }
-
-    private function buildRolePayload(\Role $role)
+    private function buildRolePayload(Role $role)
     {
         $payload = $role->toSafeArray();
         $payload['permissions'] = $this->roleRepository->getPermissions($role->getId());
@@ -135,7 +145,7 @@ class RoleService
     {
         $role = $this->roleRepository->findById((int) $roleId);
         if (!$role) {
-            throw new \ApiException('Role introuvable.', 404, 'role_not_found');
+            throw new ApiException('Role introuvable.', 404, 'role_not_found');
         }
 
         return $role;
@@ -144,7 +154,7 @@ class RoleService
     private function resolvePermissionIds($permissionCodes)
     {
         if (!is_array($permissionCodes)) {
-            throw new \ApiException('permission_codes doit etre un tableau.', 422, 'validation_error');
+            throw new ApiException('permission_codes doit etre un tableau.', 422, 'validation_error');
         }
 
         if (empty($permissionCodes)) {
@@ -158,7 +168,7 @@ class RoleService
 
         foreach ($permissionCodes as $permissionCode) {
             if (!in_array($permissionCode, $foundCodes, true)) {
-                throw new \ApiException('Permission introuvable: ' . $permissionCode, 404, 'permission_not_found');
+                throw new ApiException('Permission introuvable: ' . $permissionCode, 404, 'permission_not_found');
             }
         }
 
@@ -176,5 +186,16 @@ class RoleService
         $value = trim((string) $payload[$key]);
 
         return $value === '' ? null : $value;
+    }
+
+    private function shouldUsePaginatedList(array $filters)
+    {
+        foreach (['search', 'page', 'per_page'] as $key) {
+            if (array_key_exists($key, $filters) && $filters[$key] !== null && $filters[$key] !== '') {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

@@ -8,7 +8,7 @@ class AuthLogRepository
 
     public function __construct()
     {
-        $this->connection = Database::getConnection();
+        $this->connection = \Database::getConnection();
     }
 
     public function log($userId, $eventType, $message, $ipAddress, $userAgent)
@@ -24,5 +24,106 @@ class AuthLogRepository
             'ip_address' => $ipAddress,
             'user_agent' => $userAgent,
         ]);
+    }
+
+    public function findRecent($limit = 100)
+    {
+        $limit = max(1, min(500, (int) $limit));
+
+        $statement = $this->connection->prepare(
+            'SELECT
+                al.id,
+                al.user_id,
+                al.event_type,
+                al.message,
+                al.ip_address,
+                al.user_agent,
+                al.created_at,
+                u.username,
+                u.email,
+                CONCAT(COALESCE(u.first_name, \'\'), CASE WHEN u.first_name IS NOT NULL AND u.last_name IS NOT NULL THEN \' \' ELSE \'\' END, COALESCE(u.last_name, \'\')) AS full_name
+             FROM auth_logs al
+             LEFT JOIN users u ON u.id = al.user_id
+             ORDER BY al.created_at DESC, al.id DESC
+             LIMIT ' . $limit
+        );
+        $statement->execute();
+
+        return $statement->fetchAll();
+    }
+
+    public function findPaginated(array $filters)
+    {
+        $page = max(1, (int) ($filters['page'] ?? 1));
+        $perPage = max(1, min(100, (int) ($filters['per_page'] ?? 10)));
+        $offset = ($page - 1) * $perPage;
+        $query = $this->buildFilteredQuery($filters);
+
+        $countStatement = $this->connection->prepare(
+            'SELECT COUNT(*)
+             FROM auth_logs al
+             LEFT JOIN users u ON u.id = al.user_id' . $query['where']
+        );
+        $countStatement->execute($query['params']);
+        $total = (int) $countStatement->fetchColumn();
+
+        $statement = $this->connection->prepare(
+            'SELECT
+                al.id,
+                al.user_id,
+                al.event_type,
+                al.message,
+                al.ip_address,
+                al.user_agent,
+                al.created_at,
+                u.username,
+                u.email,
+                CONCAT(COALESCE(u.first_name, \'\'), CASE WHEN u.first_name IS NOT NULL AND u.last_name IS NOT NULL THEN \' \' ELSE \'\' END, COALESCE(u.last_name, \'\')) AS full_name
+             FROM auth_logs al
+             LEFT JOIN users u ON u.id = al.user_id' . $query['where'] . '
+             ORDER BY al.created_at DESC, al.id DESC
+             LIMIT :limit OFFSET :offset'
+        );
+
+        foreach ($query['params'] as $key => $value) {
+            $statement->bindValue($key, $value);
+        }
+
+        $statement->bindValue(':limit', $perPage, PDO::PARAM_INT);
+        $statement->bindValue(':offset', $offset, PDO::PARAM_INT);
+        $statement->execute();
+
+        return [
+            'items' => $statement->fetchAll(),
+            'pagination' => [
+                'page' => $page,
+                'per_page' => $perPage,
+                'total' => $total,
+                'total_pages' => $total > 0 ? (int) ceil($total / $perPage) : 0,
+            ],
+        ];
+    }
+
+    private function buildFilteredQuery(array $filters)
+    {
+        $conditions = [];
+        $params = [];
+        $search = trim((string) ($filters['search'] ?? ''));
+        $eventType = trim((string) ($filters['event_type'] ?? ''));
+
+        if ($search !== '') {
+            $conditions[] = '(al.event_type LIKE :search OR al.message LIKE :search OR COALESCE(u.username, \'\') LIKE :search OR COALESCE(u.email, \'\') LIKE :search OR COALESCE(CONCAT(COALESCE(u.first_name, \'\'), \' \', COALESCE(u.last_name, \'\')), \'\') LIKE :search OR COALESCE(al.ip_address, \'\') LIKE :search)';
+            $params[':search'] = '%' . $search . '%';
+        }
+
+        if ($eventType !== '') {
+            $conditions[] = 'al.event_type = :event_type';
+            $params[':event_type'] = $eventType;
+        }
+
+        return [
+            'where' => empty($conditions) ? '' : ' WHERE ' . implode(' AND ', $conditions),
+            'params' => $params,
+        ];
     }
 }

@@ -54,6 +54,7 @@ Le token est obtenu apres un appel reussi a `POST /auth/login`.
 | POST | /auth/login | publique | aucune |
 | POST | /auth/logout | token | aucune |
 | GET | /auth/me | token | aucune |
+| GET | /logs | token | log.read |
 | GET | /users | token | user.read |
 | GET | /users/{id} | token | user.read |
 | POST | /users | token | user.create |
@@ -264,7 +265,46 @@ Erreurs frequentes :
 - `401 missing_token`
 - `401 invalid_token`
 
-### 3.3 Utilisateurs
+### 3.3 Logs
+
+#### `GET /logs`
+
+Permission requise : `log.read`
+
+But : lire les derniers evenements d'authentification et d'administration.
+
+Query params possibles :
+
+- `limit` : nombre maximum de lignes retournees, borne entre 1 et 500
+
+Exemple :
+
+```text
+GET /logs?limit=50
+```
+
+Reponse de succes : `200 OK`
+
+Chaque ligne contient notamment :
+
+- `id`
+- `user_id`
+- `event_type`
+- `message`
+- `ip_address`
+- `user_agent`
+- `created_at`
+- `username`
+- `email`
+- `full_name`
+
+Erreurs frequentes :
+
+- `401 missing_authorization_header`
+- `401 invalid_token`
+- `403 forbidden_permission`
+
+### 3.4 Utilisateurs
 
 Toutes les routes ci-dessous demandent un token valide.
 
@@ -422,7 +462,7 @@ Erreurs frequentes :
 - `404 role_not_found`
 - `422 validation_error`
 
-### 3.4 Roles et permissions
+### 3.5 Roles et permissions
 
 Toutes les routes ci-dessous demandent un token valide.
 
@@ -584,3 +624,29 @@ Son travail est simple :
 Regle speciale :
 
 si l'utilisateur a le role `SUPER_ADMIN`, il passe partout.
+
+## 5. Console graphique
+
+Une interface graphique Tailwind est disponible a la racine du projet.
+
+Page :
+
+- `index.php`
+
+Elle permet de :
+
+- tester tous les endpoints depuis le navigateur
+- se connecter et stocker un token utilisateur ou admin
+- naviguer entre des vues separees `Dashboard`, `Users`, `Roles` et `Logs`
+- lister les utilisateurs
+- creer, modifier et supprimer des utilisateurs
+- rechercher, filtrer et paginer la liste des utilisateurs
+- editer les utilisateurs inline directement dans le tableau
+- lister les roles et les permissions
+- creer, modifier et supprimer des roles
+- rechercher et paginer les roles
+- editer les roles inline directement dans les cartes
+- consulter les logs via `GET /logs`
+- filtrer les logs par texte et type d'evenement
+- paginer les logs affiches dans l'interface
+- confirmer les suppressions via des modales

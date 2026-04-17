@@ -8,8 +8,10 @@ $schemaService->ensureDatabaseReady();
 $request = \ApiRequest::fromGlobals(getApiRoute());
 $router = new \ApiRouter();
 $authController = new \AuthController();
+$logController = new \LogController();
 $userController = new \UserController();
 $roleController = new \RoleController();
+$permissionController = new \PermissionController();
 $authorizationMiddleware = new \AuthorizationMiddleware();
 
 $router->add('GET', '/health', function () use ($authController) {
@@ -27,6 +29,10 @@ $router->add('POST', '/auth/logout', authorizeRoute($authorizationMiddleware, fu
 $router->add('GET', '/auth/me', authorizeRoute($authorizationMiddleware, function ($request) use ($authController) {
     return $authController->me($request);
 }));
+
+$router->add('GET', '/logs', authorizeRoute($authorizationMiddleware, function ($request) use ($logController) {
+    return $logController->index($request);
+}, ['permissions' => ['log.read']]));
 
 $router->add('GET', '/users', authorizeRoute($authorizationMiddleware, function ($request) use ($userController) {
     return $userController->index($request);
@@ -65,9 +71,15 @@ $router->add('DELETE', '/roles/{id}', authorizeRoute($authorizationMiddleware, f
 $router->add('PUT', '/roles/{id}/permissions', authorizeRoute($authorizationMiddleware, function ($request) use ($roleController) {
     return $roleController->syncPermissions($request);
 }, ['permissions' => ['permission.assign']]));
-$router->add('GET', '/permissions', authorizeRoute($authorizationMiddleware, function ($request) use ($roleController) {
-    return $roleController->permissions($request);
+$router->add('GET', '/permissions', authorizeRoute($authorizationMiddleware, function ($request) use ($permissionController) {
+    return $permissionController->index($request);
 }, ['permissions' => ['permission.read']]));
+$router->add('GET', '/permissions/{id}', authorizeRoute($authorizationMiddleware, function ($request) use ($permissionController) {
+    return $permissionController->show($request);
+}, ['permissions' => ['permission.read']]));
+$router->add('PUT', '/permissions/{id}', authorizeRoute($authorizationMiddleware, function ($request) use ($permissionController) {
+    return $permissionController->update($request);
+}, ['permissions' => ['permission.update']]));
 
 try {
     $response = $router->dispatch($request);

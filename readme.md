@@ -67,11 +67,16 @@ banamur_auth/
 |   |-- .htaccess
 |   `-- index.php
 |-- API.md
+|-- index.php
 |-- controller/
+|   |-- LogController.php
 |   |-- AuthController.php
 |   |-- RoleController.php
 |   `-- UserController.php
 |-- css/
+|   `-- admin-dashboard.css
+|-- js/
+|   `-- admin-dashboard.js
 |-- model/
 |   |-- ApiException.php
 |   |-- ApiRequest.php
@@ -92,6 +97,7 @@ banamur_auth/
 |   |-- AuthorizationMiddleware.php
 |   |-- AuthService.php
 |   |-- JsonResponse.php
+|   |-- LogService.php
 |   |-- RoleService.php
 |   |-- SchemaService.php
 |   `-- UserService.php
@@ -385,7 +391,31 @@ Fichier a consulter :
 
 - `API.md`
 
-## 11. Comment tester rapidement avec Postman ou curl
+## 11. Console graphique
+
+Une interface graphique est disponible a la racine du projet :
+
+- `index.php`
+
+Cette interface permet de :
+
+- tester tous les endpoints
+- gerer l'authentification visuellement
+- naviguer entre des vues separees `Dashboard`, `Users`, `Roles` et `Logs`
+- lister les utilisateurs
+- faire de vrais ajouts et modifications sur users et roles
+- filtrer et paginer les utilisateurs et les logs
+- editer les utilisateurs et les roles inline directement dans les listes
+- confirmer les suppressions via des modales
+- consulter les logs applicatifs
+
+Technos utilisees pour cette interface :
+
+- Tailwind CSS via CDN
+- JavaScript vanilla
+- appels directs aux endpoints JSON existants
+
+## 12. Comment tester rapidement avec Postman ou curl
 
 ### Collection Postman fournie
 
@@ -505,7 +535,7 @@ curl http://localhost/banamur_auth/api/auth/me \
   -H "Authorization: Bearer TON_TOKEN"
 ```
 
-## 12. Premier administrateur : comment faire
+## 13. Premier administrateur : comment faire
 
 Comme aucun compte `ADMIN` n'est cree automatiquement, il faut faire une petite manipulation au debut.
 
@@ -530,7 +560,7 @@ les identifiants `1` et `2` ci-dessus sont seulement des exemples.
 
 Il faut verifier les vraies valeurs dans ta base.
 
-## 13. Comment lire le code quand on debute
+## 14. Comment lire le code quand on debute
 
 Si tu veux comprendre le projet sans te perdre, lis les fichiers dans cet ordre :
 
@@ -549,7 +579,7 @@ Pourquoi cet ordre ?
 
 Parce qu'il suit exactement le chemin d'une requete HTTP dans l'application.
 
-## 14. Bonnes pratiques deja appliquees dans le projet
+## 15. Bonnes pratiques deja appliquees dans le projet
 
 - les mots de passe sont hashes avec `password_hash()`
 - la verification du mot de passe utilise `password_verify()`
@@ -559,17 +589,17 @@ Parce qu'il suit exactement le chemin d'une requete HTTP dans l'application.
 - les droits sont controles par permissions
 - les erreurs metier sont centralisees avec `ApiException`
 
-## 15. Limitations actuelles
+## 16. Limitations actuelles
 
 Le projet fonctionne deja, mais il reste des points a garder en tete :
 
-- il n'y a pas encore de frontend
+- le frontend fourni est une console d'administration et de test, pas encore un espace utilisateur complet
 - il n'y a pas encore de tests automatises
 - le premier administrateur doit encore etre configure manuellement
 - il n'y a pas encore de mecanisme de reset mot de passe expose en API
 - il n'y a pas encore de pagination sur les listes
 
-## 16. Si tu dois ajouter une nouvelle fonctionnalite
+## 17. Si tu dois ajouter une nouvelle fonctionnalite
 
 Exemple : tu veux ajouter une route `GET /api/profile`.
 
@@ -582,7 +612,7 @@ Ordre conseille :
 5. proteger la route avec `authorizeRoute(...)` si besoin
 6. tester avec Postman
 
-## 17. Resume ultra simple
+## 18. Resume ultra simple
 
 Si tu dois retenir seulement l'essentiel, retiens ceci :
 
@@ -594,7 +624,7 @@ Si tu dois retenir seulement l'essentiel, retiens ceci :
 - le repository fait les requetes SQL
 - la reponse repart en JSON
 
-## 18. Prochaine amelioration utile
+## 19. Prochaine amelioration utile
 
 Pour rendre le projet encore plus simple a prendre en main, les prochaines evolutions utiles seraient :
 

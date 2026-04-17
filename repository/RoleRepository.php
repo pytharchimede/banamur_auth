@@ -3,6 +3,8 @@
 require_once __DIR__ . '/../model/Database.php';
 require_once __DIR__ . '/../model/Role.php';
 
+use Role;
+
 class RoleRepository
 {
     private $connection;
@@ -18,8 +20,44 @@ class RoleRepository
         $rows = $statement->fetchAll();
 
         return array_map(function ($row) {
-            return \Role::fromArray($row);
+            return Role::fromArray($row);
         }, $rows);
+    }
+
+    public function findPaginated(array $filters)
+    {
+        $page = max(1, (int) ($filters['page'] ?? 1));
+        $perPage = max(1, min(100, (int) ($filters['per_page'] ?? 10)));
+        $offset = ($page - 1) * $perPage;
+        $query = $this->buildFilteredQuery($filters);
+
+        $countStatement = $this->connection->prepare('SELECT COUNT(*) FROM roles r' . $query['where']);
+        $countStatement->execute($query['params']);
+        $total = (int) $countStatement->fetchColumn();
+
+        $statement = $this->connection->prepare(
+            'SELECT r.* FROM roles r' . $query['where'] . ' ORDER BY r.name ASC, r.id ASC LIMIT :limit OFFSET :offset'
+        );
+
+        foreach ($query['params'] as $key => $value) {
+            $statement->bindValue($key, $value);
+        }
+
+        $statement->bindValue(':limit', $perPage, PDO::PARAM_INT);
+        $statement->bindValue(':offset', $offset, PDO::PARAM_INT);
+        $statement->execute();
+
+        return [
+            'items' => array_map(function ($row) {
+                return Role::fromArray($row);
+            }, $statement->fetchAll()),
+            'pagination' => [
+                'page' => $page,
+                'per_page' => $perPage,
+                'total' => $total,
+                'total_pages' => $total > 0 ? (int) ceil($total / $perPage) : 0,
+            ],
+        ];
     }
 
     public function findById($roleId)
@@ -28,7 +66,7 @@ class RoleRepository
         $statement->execute(['id' => $roleId]);
         $row = $statement->fetch();
 
-        return $row ? \Role::fromArray($row) : null;
+        return $row ? Role::fromArray($row) : null;
     }
 
     public function findByCode($code)
@@ -37,7 +75,7 @@ class RoleRepository
         $statement->execute(['code' => $code]);
         $row = $statement->fetch();
 
-        return $row ? \Role::fromArray($row) : null;
+        return $row ? Role::fromArray($row) : null;
     }
 
     public function codeExists($code, $excludeId = null)
@@ -142,5 +180,37 @@ class RoleRepository
             $this->connection->rollBack();
             throw $exception;
         }
+    }
+
+    public function findByCodes(array $codes)
+    {
+        if (empty($codes)) {
+            return [];
+        }
+
+        $placeholders = implode(', ', array_fill(0, count($codes), '?'));
+        $statement = $this->connection->prepare('SELECT * FROM roles WHERE code IN (' . $placeholders . ') ORDER BY name ASC');
+        $statement->execute(array_values($codes));
+
+        return array_map(function ($row) {
+            return Role::fromArray($row);
+        }, $statement->fetchAll());
+    }
+
+    private function buildFilteredQuery(array $filters)
+    {
+        $conditions = [];
+        $params = [];
+        $search = trim((string) ($filters['search'] ?? ''));
+
+        if ($search !== '') {
+            $conditions[] = '(r.name LIKE :search OR r.code LIKE :search OR COALESCE(r.description, \'\') LIKE :search)';
+            $params[':search'] = '%' . $search . '%';
+        }
+
+        return [
+            'where' => empty($conditions) ? '' : ' WHERE ' . implode(' AND ', $conditions),
+            'params' => $params,
+        ];
     }
 }
