@@ -8,10 +8,12 @@ $schemaService->ensureDatabaseReady();
 $request = \ApiRequest::fromGlobals(getApiRoute());
 $router = new \ApiRouter();
 $authController = new \AuthController();
+$apiKeyController = new \ApiKeyController();
 $logController = new \LogController();
 $userController = new \UserController();
 $roleController = new \RoleController();
 $permissionController = new \PermissionController();
+$adminController = new \AdminController();
 $authorizationMiddleware = new \AuthorizationMiddleware();
 
 $router->add('GET', '/health', function () use ($authController) {
@@ -23,12 +25,29 @@ $router->add('POST', '/auth/register', function ($request) use ($authController)
 $router->add('POST', '/auth/login', function ($request) use ($authController) {
     return $authController->login($request);
 });
+$router->add('GET', '/auth/anti-bot-challenge', function ($request) use ($authController) {
+    return $authController->antiBotChallenge($request);
+});
 $router->add('POST', '/auth/logout', authorizeRoute($authorizationMiddleware, function ($request) use ($authController) {
     return $authController->logout($request);
 }));
 $router->add('GET', '/auth/me', authorizeRoute($authorizationMiddleware, function ($request) use ($authController) {
     return $authController->me($request);
 }));
+
+$router->add('GET', '/admin/bootstrap', authorizeRoute($authorizationMiddleware, function ($request) use ($adminController) {
+    return $adminController->bootstrap($request);
+}, ['roles' => ['ADMIN', 'SUPER_ADMIN']]));
+
+$router->add('GET', '/api-keys', authorizeRoute($authorizationMiddleware, function ($request) use ($apiKeyController) {
+    return $apiKeyController->index($request);
+}, ['permissions' => ['api_key.read']]));
+$router->add('POST', '/api-keys', authorizeRoute($authorizationMiddleware, function ($request) use ($apiKeyController) {
+    return $apiKeyController->store($request);
+}, ['permissions' => ['api_key.manage']]));
+$router->add('DELETE', '/api-keys/{id}', authorizeRoute($authorizationMiddleware, function ($request) use ($apiKeyController) {
+    return $apiKeyController->destroy($request);
+}, ['permissions' => ['api_key.manage']]));
 
 $router->add('GET', '/logs', authorizeRoute($authorizationMiddleware, function ($request) use ($logController) {
     return $logController->index($request);

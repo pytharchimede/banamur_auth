@@ -105,12 +105,42 @@ class ApiRequest
 
     public function getBearerToken()
     {
-        $header = $this->getHeader('authorization', '');
-        if (!is_string($header) || stripos($header, 'Bearer ') !== 0) {
+        $token = $this->findBearerToken();
+        if ($token === null) {
             throw new ApiException('Header Authorization Bearer requis.', 401, 'missing_authorization_header');
         }
 
-        return trim(substr($header, 7));
+        return $token;
+    }
+
+    public function findBearerToken()
+    {
+        $header = $this->getHeader('authorization', '');
+        if (!is_string($header) || stripos($header, 'Bearer ') !== 0) {
+            $cookieToken = trim((string) ($_COOKIE['banamur_admin_token'] ?? ''));
+            return $cookieToken === '' ? null : $cookieToken;
+        }
+
+        $token = trim(substr($header, 7));
+
+        return $token === '' ? null : $token;
+    }
+
+    public function findApiKey()
+    {
+        $headerApiKey = trim((string) $this->getHeader('x-api-key', ''));
+        if ($headerApiKey !== '') {
+            return $headerApiKey;
+        }
+
+        $authorization = $this->getHeader('authorization', '');
+        if (is_string($authorization) && stripos($authorization, 'ApiKey ') === 0) {
+            $apiKey = trim(substr($authorization, 7));
+
+            return $apiKey === '' ? null : $apiKey;
+        }
+
+        return null;
     }
 
     public function getContext()
@@ -145,6 +175,27 @@ class ApiRequest
 
         if (isset($_SERVER['Authorization']) && is_string($_SERVER['Authorization'])) {
             $headers['authorization'] = $_SERVER['Authorization'];
+        }
+
+        if (isset($_SERVER['HTTP_AUTHORIZATION']) && is_string($_SERVER['HTTP_AUTHORIZATION'])) {
+            $headers['authorization'] = $_SERVER['HTTP_AUTHORIZATION'];
+        }
+
+        if (isset($_SERVER['REDIRECT_HTTP_AUTHORIZATION']) && is_string($_SERVER['REDIRECT_HTTP_AUTHORIZATION'])) {
+            $headers['authorization'] = $_SERVER['REDIRECT_HTTP_AUTHORIZATION'];
+        }
+
+        if (function_exists('apache_request_headers')) {
+            foreach (apache_request_headers() as $name => $value) {
+                if (!is_string($name) || !is_string($value)) {
+                    continue;
+                }
+
+                if (strtolower($name) === 'authorization') {
+                    $headers['authorization'] = $value;
+                    break;
+                }
+            }
         }
 
         return $headers;

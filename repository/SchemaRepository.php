@@ -103,6 +103,148 @@ class SchemaRepository
         ]);
     }
 
+    public function hasUserWithRoleCodes(array $roleCodes)
+    {
+        if (empty($roleCodes)) {
+            return false;
+        }
+
+        $placeholders = implode(', ', array_fill(0, count($roleCodes), '?'));
+        $statement = $this->connection->prepare(
+            'SELECT COUNT(*)
+             FROM user_roles ur
+             INNER JOIN roles r ON r.id = ur.role_id
+             WHERE r.code IN (' . $placeholders . ')'
+        );
+        $statement->execute(array_values($roleCodes));
+
+        return (int) $statement->fetchColumn() > 0;
+    }
+
+    public function findUserIdByUsername($username)
+    {
+        $statement = $this->connection->prepare('SELECT id FROM users WHERE username = :username LIMIT 1');
+        $statement->execute(['username' => $username]);
+
+        $userId = $statement->fetchColumn();
+
+        return $userId ? (int) $userId : null;
+    }
+
+    public function findUserIdByEmail($email)
+    {
+        $statement = $this->connection->prepare('SELECT id FROM users WHERE email = :email LIMIT 1');
+        $statement->execute(['email' => $email]);
+        $userId = $statement->fetchColumn();
+
+        return $userId ? (int) $userId : null;
+    }
+
+    public function createUser(array $data)
+    {
+        $statement = $this->connection->prepare(
+            'INSERT INTO users (
+                username,
+                email,
+                password_hash,
+                first_name,
+                last_name,
+                phone,
+                status,
+                created_at,
+                updated_at
+            ) VALUES (
+                :username,
+                :email,
+                :password_hash,
+                :first_name,
+                :last_name,
+                :phone,
+                :status,
+                NOW(),
+                NOW()
+            )'
+        );
+        $statement->execute([
+            'username' => $data['username'],
+            'email' => $data['email'],
+            'password_hash' => $data['password_hash'],
+            'first_name' => $data['first_name'] ?? null,
+            'last_name' => $data['last_name'] ?? null,
+            'phone' => $data['phone'] ?? null,
+            'status' => $data['status'] ?? 'active',
+        ]);
+
+        return (int) $this->connection->lastInsertId();
+    }
+
+    public function updateBootstrapAdmin($userId, array $data)
+    {
+        $statement = $this->connection->prepare(
+            'UPDATE users
+             SET password_hash = :password_hash,
+                 first_name = :first_name,
+                 last_name = :last_name,
+                 status = :status,
+                 updated_at = NOW()
+             WHERE id = :id'
+        );
+        $statement->execute([
+            'id' => (int) $userId,
+            'password_hash' => $data['password_hash'],
+            'first_name' => $data['first_name'] ?? null,
+            'last_name' => $data['last_name'] ?? null,
+            'status' => $data['status'] ?? 'active',
+        ]);
+    }
+
+    public function assignRoleToUserIfMissing($userId, $roleCode)
+    {
+        $statement = $this->connection->prepare(
+            'SELECT ur.id
+             FROM user_roles ur
+             INNER JOIN roles r ON r.id = ur.role_id
+             WHERE ur.user_id = :user_id AND r.code = :role_code
+             LIMIT 1'
+        );
+        $statement->execute([
+            'user_id' => (int) $userId,
+            'role_code' => $roleCode,
+        ]);
+
+        if ($statement->fetchColumn()) {
+            return;
+        }
+
+        $insert = $this->connection->prepare(
+            'INSERT INTO user_roles (user_id, role_id, assigned_by, assigned_at)
+             SELECT :user_id, r.id, NULL, NOW()
+             FROM roles r
+             WHERE r.code = :role_code'
+        );
+        $insert->execute([
+            'user_id' => (int) $userId,
+            'role_code' => $roleCode,
+        ]);
+    }
+
+    public function assignRoleToUsersWithoutAnyRole($roleCode)
+    {
+        $statement = $this->connection->prepare(
+            'INSERT INTO user_roles (user_id, role_id, assigned_by, assigned_at)
+             SELECT u.id, r.id, NULL, NOW()
+             FROM users u
+             INNER JOIN roles r ON r.code = :role_code
+             LEFT JOIN user_roles ur ON ur.user_id = u.id
+             WHERE ur.id IS NULL'
+        );
+        $statement->execute([
+            'role_code' => $roleCode,
+        ]);
+
+        return $statement->rowCount();
+    }
+
     private function getDatabaseName()
     {
         \EnvConfig::loadFromDirectory(__DIR__);

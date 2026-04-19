@@ -37,13 +37,26 @@ Quand une erreur survient :
 
 ### Authentification
 
-Les routes protegees attendent cet en-tete HTTP :
+Les routes protegees peuvent etre appelees de deux facons :
+
+1. avec un JWT dans le header Bearer
+2. avec une cle API dans le header `X-API-Key`
+
+Exemple JWT :
 
 ```text
 Authorization: Bearer TON_TOKEN
 ```
 
-Le token est obtenu apres un appel reussi a `POST /auth/login`.
+Exemple cle API :
+
+```text
+X-API-Key: TA_CLE_API
+```
+
+Le JWT est obtenu apres un appel reussi a `POST /auth/login`.
+
+La cle API est obtenue depuis l'interface d'administration ou via `POST /api-keys`.
 
 ## 2. Catalogue rapide des endpoints
 
@@ -51,9 +64,13 @@ Le token est obtenu apres un appel reussi a `POST /auth/login`.
 | --- | --- | --- | --- |
 | GET | /health | publique | aucune |
 | POST | /auth/register | publique | aucune |
+| GET | /auth/anti-bot-challenge | publique | aucune |
 | POST | /auth/login | publique | aucune |
 | POST | /auth/logout | token | aucune |
-| GET | /auth/me | token | aucune |
+| GET | /auth/me | token ou cle API | aucune |
+| GET | /api-keys | token | api_key.read |
+| POST | /api-keys | token | api_key.manage |
+| DELETE | /api-keys/{id} | token | api_key.manage |
 | GET | /logs | token | log.read |
 | GET | /users | token | user.read |
 | GET | /users/{id} | token | user.read |
@@ -160,9 +177,15 @@ Erreurs frequentes :
 
 #### `POST /auth/login`
 
-But : connecter un utilisateur et retourner un token Bearer.
+But : connecter un utilisateur et retourner un JWT Bearer.
 
 Authentification : aucune.
+
+Cas special back-office :
+
+- si le frontend admin envoie `login_scope = admin_console`, il doit aussi envoyer un defi anti-robot valide
+- ce defi se recupere via `GET /auth/anti-bot-challenge`
+- les usages Postman et curl standards ne sont pas obliges d'utiliser ce defi
 
 Body JSON attendu :
 
@@ -186,6 +209,7 @@ Exemple de reponse :
     "message": "Connexion reussie.",
     "token": "TOKEN_ICI",
     "token_type": "Bearer",
+    "auth_type": "jwt",
     "expires_at": "2026-04-18 12:00:00",
     "user": {
       "id": 1,
@@ -208,19 +232,53 @@ Exemple de reponse :
 Erreurs frequentes :
 
 - `422 validation_error`
+- `422 anti_bot_required`
+- `403 anti_bot_failed`
+- `403 anti_bot_expired`
+- `429 anti_bot_too_fast`
 - `401 invalid_credentials`
 - `403 inactive_user`
 
+#### `GET /auth/anti-bot-challenge`
+
+But : recuperer un defi anti-robot signe pour le formulaire de connexion du back-office.
+
+Authentification : aucune.
+
+Reponse de succes : `200 OK`
+
+Contenu retourne :
+
+- objet `anti_bot.brand`
+- objet `anti_bot.prompt`
+- objet `anti_bot.token`
+- tableau `anti_bot.cards`
+- `anti_bot.min_wait_seconds`
+- `anti_bot.expires_at`
+
+Notes utiles :
+
+- le token du defi est signe cote serveur
+- il est lie a l'IP et au user-agent du navigateur
+- il expire rapidement
+- il doit etre renvoye au moment du login admin avec `anti_bot_answer`
+
 #### `GET /auth/me`
 
-But : recuperer l'utilisateur associe au token courant.
+But : recuperer l'utilisateur associe au JWT courant ou a la cle API courante.
 
-Authentification : token requis.
+Authentification : JWT ou cle API requis.
 
-Header requis :
+Header JWT :
 
 ```text
 Authorization: Bearer TON_TOKEN
+```
+
+Ou header cle API :
+
+```text
+X-API-Key: TA_CLE_API
 ```
 
 Reponse de succes : `200 OK`
@@ -229,7 +287,9 @@ Contenu retourne :
 
 - message
 - objet `user`
-- objet `session` avec `created_at` et `expires_at`
+- objet `auth`
+- objet `session` avec `created_at` et `expires_at` si l'appel vient d'un JWT
+- objet `api_key` si l'appel vient d'une cle API
 
 Erreurs frequentes :
 
@@ -241,7 +301,7 @@ Erreurs frequentes :
 
 But : revoquer le token courant.
 
-Authentification : token requis.
+Authentification : JWT requis.
 
 Header requis :
 
@@ -265,7 +325,83 @@ Erreurs frequentes :
 - `401 missing_token`
 - `401 invalid_token`
 
-### 3.3 Logs
+### 3.3 Cles API
+
+#### `GET /api-keys`
+
+Permission requise : `api_key.read`
+
+But : lister les cles API actives.
+
+Chaque ligne contient notamment :
+
+- `id`
+- `name`
+- `key_prefix`
+- `last_used_at`
+- `expires_at`
+- `created_at`
+- objet `user`
+
+#### `POST /api-keys`
+
+Permission requise : `api_key.manage`
+
+But : creer une cle API pour un utilisateur.
+
+Body JSON possible :
+
+```json
+{
+  "name": "Postman developer key",
+  "user_id": 1,
+  "expires_in_days": 30
+}
+```
+
+Notes importantes :
+
+- `name` est obligatoire
+- `user_id` est optionnel
+- si `user_id` est absent, la cle est creee pour l'utilisateur authentifie
+- `expires_in_days` est optionnel et doit etre compris entre 1 et 365
+- la valeur `plain_key` n'est retournee qu'une seule fois a la creation
+
+Exemple de reponse :
+
+```json
+{
+  "success": true,
+  "data": {
+    "message": "Cle API creee avec succes. Copie-la maintenant: elle ne sera plus reaffichee en clair.",
+    "plain_key": "ban_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "api_key": {
+      "id": 1,
+      "name": "Postman developer key",
+      "key_prefix": "ban_xxxxxxxx",
+      "expires_at": "2026-05-19 10:00:00"
+    }
+  }
+}
+```
+
+Erreurs frequentes :
+
+- `422 validation_error`
+- `404 user_not_found`
+
+#### `DELETE /api-keys/{id}`
+
+Permission requise : `api_key.manage`
+
+But : revoquer une cle API.
+
+Erreurs frequentes :
+
+- `404 api_key_not_found`
+- `409 api_key_already_revoked`
+
+### 3.4 Logs
 
 #### `GET /logs`
 
@@ -304,7 +440,7 @@ Erreurs frequentes :
 - `401 invalid_token`
 - `403 forbidden_permission`
 
-### 3.4 Utilisateurs
+### 3.5 Utilisateurs
 
 Toutes les routes ci-dessous demandent un token valide.
 
@@ -462,7 +598,7 @@ Erreurs frequentes :
 - `404 role_not_found`
 - `422 validation_error`
 
-### 3.5 Roles et permissions
+### 3.6 Roles et permissions
 
 Toutes les routes ci-dessous demandent un token valide.
 
@@ -616,7 +752,7 @@ L'autorisation est geree par `AuthorizationMiddleware`.
 
 Son travail est simple :
 
-1. lire le token Bearer
+1. lire le JWT Bearer ou la cle API
 2. demander a `AuthService` d'identifier l'utilisateur
 3. recuperer ses roles et ses permissions
 4. verifier que la route demandee est autorisee
@@ -636,7 +772,8 @@ Page :
 Elle permet de :
 
 - tester tous les endpoints depuis le navigateur
-- se connecter et stocker un token utilisateur ou admin
+- se connecter et stocker un JWT utilisateur ou admin
+- creer et revoquer des cles API developpeur
 - naviguer entre des vues separees `Dashboard`, `Users`, `Roles` et `Logs`
 - lister les utilisateurs
 - creer, modifier et supprimer des utilisateurs

@@ -27,10 +27,14 @@ class SchemaService
 
         $this->seedDefaultRoles();
         $this->seedDefaultPermissions();
+        $defaultAdminSeeded = $this->seedDefaultAdministrator();
+        $orphanUsersFixed = $this->assignDefaultRoleToUsersWithoutRole();
 
         return [
             'database_exists' => $this->schemaRepository->databaseExists(),
             'created_tables' => $createdTables,
+            'default_admin_seeded' => $defaultAdminSeeded,
+            'orphan_users_fixed' => $orphanUsersFixed,
         ];
     }
 
@@ -49,6 +53,8 @@ class SchemaService
             ['Modifier les utilisateurs', 'user.update', 'Mettre a jour un utilisateur', 'users'],
             ['Supprimer les utilisateurs', 'user.delete', 'Supprimer un utilisateur', 'users'],
             ['Lire les logs', 'log.read', 'Consulter les journaux de securite', 'logs'],
+            ['Lire les cles API', 'api_key.read', 'Consulter les cles API', 'api_keys'],
+            ['Gerer les cles API', 'api_key.manage', 'Creer et revoquer les cles API', 'api_keys'],
             ['Assigner les roles', 'role.assign', 'Associer des roles a un utilisateur', 'roles'],
             ['Lire les roles', 'role.read', 'Consulter les roles', 'roles'],
             ['Creer les roles', 'role.create', 'Creer un role', 'roles'],
@@ -67,6 +73,40 @@ class SchemaService
             $this->schemaRepository->assignPermissionToRoleIfMissing('SUPER_ADMIN', $permissionCode);
             $this->schemaRepository->assignPermissionToRoleIfMissing('ADMIN', $permissionCode);
         }
+    }
+
+    private function seedDefaultAdministrator()
+    {
+        $userId = $this->schemaRepository->findUserIdByUsername('admin');
+        $adminAlreadyExisted = $userId !== null;
+        $email = 'admin@banamur.local';
+
+        if ($userId === null) {
+            $userId = $this->schemaRepository->createUser([
+                'username' => 'admin',
+                'email' => $email,
+                'password_hash' => password_hash('admin', PASSWORD_DEFAULT),
+                'first_name' => 'Admin',
+                'last_name' => 'Banamur',
+                'status' => 'active',
+            ]);
+        } else {
+            $this->schemaRepository->updateBootstrapAdmin($userId, [
+                'password_hash' => password_hash('admin', PASSWORD_DEFAULT),
+                'first_name' => 'Admin',
+                'last_name' => 'Banamur',
+                'status' => 'active',
+            ]);
+        }
+
+        $this->schemaRepository->assignRoleToUserIfMissing($userId, 'ADMIN');
+
+        return !$adminAlreadyExisted;
+    }
+
+    private function assignDefaultRoleToUsersWithoutRole()
+    {
+        return $this->schemaRepository->assignRoleToUsersWithoutAnyRole('USER');
     }
 
     private function getTableDefinitions()
@@ -157,6 +197,20 @@ class SchemaService
                 created_at DATETIME NOT NULL,
                 KEY idx_auth_logs_user_id (user_id),
                 CONSTRAINT fk_auth_logs_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
+            'api_keys' => "CREATE TABLE api_keys (
+                id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+                user_id INT UNSIGNED NOT NULL,
+                name VARCHAR(120) NOT NULL,
+                key_prefix VARCHAR(20) NOT NULL,
+                key_hash CHAR(64) NOT NULL,
+                last_used_at DATETIME DEFAULT NULL,
+                expires_at DATETIME DEFAULT NULL,
+                revoked_at DATETIME DEFAULT NULL,
+                created_at DATETIME NOT NULL,
+                UNIQUE KEY uq_api_keys_key_hash (key_hash),
+                KEY idx_api_keys_user_id (user_id),
+                CONSTRAINT fk_api_keys_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
         ];
     }

@@ -8,7 +8,7 @@ class AuthSessionRepository
 
     public function __construct()
     {
-        $this->connection = Database::getConnection();
+        $this->connection = \Database::getConnection();
     }
 
     public function create($userId, $tokenHash, $ipAddress, $userAgent, $expiresAt)
@@ -24,6 +24,22 @@ class AuthSessionRepository
             'user_agent' => $userAgent,
             'expires_at' => $expiresAt,
         ]);
+
+        return (int) $this->connection->lastInsertId();
+    }
+
+    public function findActiveById($id)
+    {
+        $statement = $this->connection->prepare(
+            'SELECT * FROM auth_sessions
+             WHERE id = :id
+               AND revoked_at IS NULL
+               AND expires_at > NOW()
+             LIMIT 1'
+        );
+        $statement->execute(['id' => (int) $id]);
+
+        return $statement->fetch() ?: null;
     }
 
     public function findActiveByTokenHash($tokenHash)
@@ -51,6 +67,16 @@ class AuthSessionRepository
             'UPDATE auth_sessions SET revoked_at = NOW() WHERE token_hash = :token_hash AND revoked_at IS NULL'
         );
         $statement->execute(['token_hash' => $tokenHash]);
+
+        return $statement->rowCount() > 0;
+    }
+
+    public function revokeById($id)
+    {
+        $statement = $this->connection->prepare(
+            'UPDATE auth_sessions SET revoked_at = NOW() WHERE id = :id AND revoked_at IS NULL'
+        );
+        $statement->execute(['id' => (int) $id]);
 
         return $statement->rowCount() > 0;
     }

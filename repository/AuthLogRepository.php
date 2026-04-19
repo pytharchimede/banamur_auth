@@ -104,6 +104,38 @@ class AuthLogRepository
         ];
     }
 
+    public function countRecentByIpAndEvents($ipAddress, array $eventTypes, $windowInMinutes = 15)
+    {
+        $ipAddress = trim((string) $ipAddress);
+        if ($ipAddress === '' || empty($eventTypes)) {
+            return 0;
+        }
+
+        $windowInMinutes = max(1, (int) $windowInMinutes);
+
+        $placeholders = [];
+        $params = [
+            ':ip_address' => $ipAddress,
+        ];
+
+        foreach (array_values($eventTypes) as $index => $eventType) {
+            $placeholder = ':event_' . $index;
+            $placeholders[] = $placeholder;
+            $params[$placeholder] = $eventType;
+        }
+
+        $statement = $this->connection->prepare(
+            'SELECT COUNT(*)
+             FROM auth_logs
+             WHERE ip_address = :ip_address
+               AND event_type IN (' . implode(', ', $placeholders) . ')
+             AND created_at >= DATE_SUB(NOW(), INTERVAL ' . $windowInMinutes . ' MINUTE)'
+        );
+        $statement->execute($params);
+
+        return (int) $statement->fetchColumn();
+    }
+
     private function buildFilteredQuery(array $filters)
     {
         $conditions = [];
