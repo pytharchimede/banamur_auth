@@ -29,6 +29,14 @@ class AuthController
         ];
     }
 
+    public function antiBotChallenge(\ApiRequest $request)
+    {
+        return [
+            'status' => 200,
+            'body' => $this->authService->issueAntiBotChallenge($request->getContext()),
+        ];
+    }
+
     public function logout(\ApiRequest $request)
     {
         return [
@@ -39,9 +47,14 @@ class AuthController
 
     public function me(\ApiRequest $request)
     {
+        $identity = $request->getAuthenticatedIdentity();
+        if ($identity === null) {
+            $identity = $this->authService->authenticateRequest($request);
+        }
+
         return [
             'status' => 200,
-            'body' => $this->authService->getAuthenticatedUser($request->getBearerToken()),
+            'body' => $this->authService->formatIdentityResponse($identity),
         ];
     }
 

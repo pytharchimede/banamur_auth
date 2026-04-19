@@ -1,4 +1,8 @@
 (function () {
+  const pageKind = window.BANAMUR_DASHBOARD.page || "admin";
+  const loginUrl = window.BANAMUR_DASHBOARD.loginUrl || "/login";
+  const adminUrl = window.BANAMUR_DASHBOARD.adminUrl || "/admin";
+
   const viewMeta = {
     dashboard: {
       title: "Dashboard",
@@ -25,17 +29,25 @@
   const state = {
     apiBaseUrl: window.BANAMUR_DASHBOARD.apiBaseUrl,
     route: "dashboard",
+    authFailureHandled: false,
+    sessionCheckCompleted: false,
+    currentSessionUser: window.BANAMUR_DASHBOARD.bootAdminUser || null,
+    apiKeyDraftUserId: null,
     users: [],
     roles: [],
     permissions: [],
     logs: [],
+    apiKeys: [],
+    antiBot: null,
     explorerSelection: null,
     editingUserId: null,
     editingRoleId: null,
     confirmAction: null,
+    createUserPreset: "developer",
     usersUI: {
       search: "",
       status: "all",
+      accountType: "all",
       role: "all",
       page: 1,
       pageSize: 10,
@@ -82,6 +94,26 @@
       endpoint("me", "Me", "GET", "/auth/me", "user"),
       endpoint("logout", "Logout", "POST", "/auth/logout", "user"),
       endpoint("logs", "Logs", "GET", "/logs?limit=100", "admin"),
+      endpoint("apiKeys", "List API Keys", "GET", "/api-keys", "admin"),
+      endpoint(
+        "apiKeyCreate",
+        "Create API Key",
+        "POST",
+        "/api-keys",
+        "admin",
+        jsonTemplate({
+          name: "Integration Postman",
+          user_id: 1,
+          expires_in_days: 30,
+        }),
+      ),
+      endpoint(
+        "apiKeyDelete",
+        "Revoke API Key",
+        "DELETE",
+        "/api-keys/1",
+        "admin",
+      ),
       endpoint("users", "List Users", "GET", "/users", "admin"),
       endpoint("userShow", "Show User", "GET", "/users/1", "admin"),
       endpoint(
@@ -174,27 +206,51 @@
   };
 
   const elements = {
+    appShell: document.getElementById("appShell"),
+    loginGateHero: document.getElementById("loginGateHero"),
+    sidebarShell: document.getElementById("sidebarShell"),
+    workspaceHeader: document.getElementById("workspaceHeader"),
     apiBaseUrlLabel: document.getElementById("apiBaseUrlLabel"),
     sessionStatus: document.getElementById("sessionStatus"),
+    sessionIdentity: document.getElementById("sessionIdentity"),
+    sessionApiPermissions: document.getElementById("sessionApiPermissions"),
     sidebarUserToken: document.getElementById("sidebarUserToken"),
     sidebarAdminToken: document.getElementById("sidebarAdminToken"),
+    sidebarApiKey: document.getElementById("sidebarApiKey"),
     currentViewTitle: document.getElementById("currentViewTitle"),
     currentViewDescription: document.getElementById("currentViewDescription"),
     metricUsers: document.getElementById("metricUsers"),
     metricRoles: document.getElementById("metricRoles"),
     metricLogs: document.getElementById("metricLogs"),
+    metricAdmins: document.getElementById("metricAdmins"),
+    metricDevelopers: document.getElementById("metricDevelopers"),
+    metricApiKeys: document.getElementById("metricApiKeys"),
     responseViewer: document.getElementById("responseViewer"),
     userTokenPreview: document.getElementById("userTokenPreview"),
     adminTokenPreview: document.getElementById("adminTokenPreview"),
+    apiKeyPreview: document.getElementById("apiKeyPreview"),
+    antiBotPrompt: document.getElementById("antiBotPrompt"),
+    antiBotGrid: document.getElementById("antiBotGrid"),
+    antiBotAnswer: document.getElementById("antiBotAnswer"),
+    antiBotStatus: document.getElementById("antiBotStatus"),
+    dashboardAdminCount: document.getElementById("dashboardAdminCount"),
+    dashboardDeveloperCount: document.getElementById("dashboardDeveloperCount"),
+    dashboardApiKeysCount: document.getElementById("dashboardApiKeysCount"),
     usersTableBody: document.getElementById("usersTableBody"),
     usersSearchInput: document.getElementById("usersSearchInput"),
     usersStatusFilter: document.getElementById("usersStatusFilter"),
+    usersAccountTypeFilter: document.getElementById("usersAccountTypeFilter"),
     usersRoleFilter: document.getElementById("usersRoleFilter"),
     usersPageSize: document.getElementById("usersPageSize"),
     usersPageInfo: document.getElementById("usersPageInfo"),
     usersPrevPage: document.getElementById("usersPrevPage"),
     usersNextPage: document.getElementById("usersNextPage"),
     createUserForm: document.getElementById("createUserForm"),
+    createUserPresetHint: document.getElementById("createUserPresetHint"),
+    developerAccessFields: document.getElementById("developerAccessFields"),
+    createUserApiKeyToggle: document.getElementById("createUserApiKeyToggle"),
+    createUserApiKeyName: document.getElementById("createUserApiKeyName"),
+    createUserApiKeyDays: document.getElementById("createUserApiKeyDays"),
     userRolesOptions: document.getElementById("userRolesOptions"),
     rolesGrid: document.getElementById("rolesGrid"),
     rolesSearchInput: document.getElementById("rolesSearchInput"),
@@ -204,6 +260,10 @@
     rolesNextPage: document.getElementById("rolesNextPage"),
     createRoleForm: document.getElementById("createRoleForm"),
     permissionsOptions: document.getElementById("permissionsOptions"),
+    createApiKeyForm: document.getElementById("createApiKeyForm"),
+    apiKeyUserSelect: document.getElementById("apiKeyUserSelect"),
+    apiKeysList: document.getElementById("apiKeysList"),
+    openApiKeysButton: document.getElementById("openApiKeysButton"),
     logsTimeline: document.getElementById("logsTimeline"),
     logsSearchInput: document.getElementById("logsSearchInput"),
     logsEventFilter: document.getElementById("logsEventFilter"),
@@ -222,20 +282,107 @@
     confirmModalMessage: document.getElementById("confirmModalMessage"),
     confirmModalCancel: document.getElementById("confirmModalCancel"),
     confirmModalSubmit: document.getElementById("confirmModalSubmit"),
+    toastStack: document.getElementById("toastStack"),
   };
 
-  function init() {
-    elements.apiBaseUrlLabel.textContent = state.apiBaseUrl;
+  async function init() {
+    syncAdminSessionToken();
+
+    if (isLoginPage()) {
+      sanitizeLoginPageSession();
+    }
+
+    if (document.getElementById("useAdminToken")) {
+      document.getElementById("useAdminToken").checked = true;
+    }
+    if (elements.apiBaseUrlLabel) {
+      elements.apiBaseUrlLabel.textContent = state.apiBaseUrl;
+    }
     bindActions();
     renderTokens();
-    renderEndpointCatalog();
-    selectEndpoint(state.endpointCatalog[0].key);
-    syncRouteFromHash();
-    refreshReferenceData();
+    if (isAdminPage()) {
+      renderEndpointCatalog();
+      selectEndpoint(state.endpointCatalog[0].key);
+      syncRouteFromHash();
+      await bootstrapAdminPage();
+    }
+    if (isLoginPage()) {
+      await loadAntiBotChallenge();
+    }
+  }
+
+  async function bootstrapAdminPage() {
+    const sessionResult = await apiCall(
+      "/admin/bootstrap?log_limit=" +
+        encodeURIComponent(String(state.logsUI.fetchLimit)),
+      {
+        method: "GET",
+        auth: "admin",
+        silent: true,
+        toastError: false,
+        suppressAuthFailureHandling: true,
+      },
+    );
+
+    state.sessionCheckCompleted = true;
+
+    if (!sessionResult || !sessionResult.success) {
+      if (
+        sessionResult &&
+        sessionResult.error &&
+        ["invalid_token", "missing_authentication", "missing_token"].includes(
+          sessionResult.error.code,
+        )
+      ) {
+        clearAdminSessionState();
+      }
+
+      handleAuthenticationFailure(
+        sessionResult || {
+          success: false,
+          error: { message: "Session admin invalide." },
+        },
+      );
+      return;
+    }
+
+    state.currentSessionUser = sessionResult.data.user || null;
+    state.users = Array.isArray(sessionResult.data.users)
+      ? sessionResult.data.users
+      : [];
+    state.roles = Array.isArray(sessionResult.data.roles)
+      ? sessionResult.data.roles
+      : [];
+    state.permissions = Array.isArray(sessionResult.data.permissions)
+      ? sessionResult.data.permissions
+      : [];
+    state.logs = Array.isArray(sessionResult.data.logs)
+      ? sessionResult.data.logs
+      : [];
+    state.apiKeys = Array.isArray(sessionResult.data.api_keys)
+      ? sessionResult.data.api_keys
+      : [];
+
+    renderTokens();
+    normalizePage("users", getFilteredUsers().length);
+    normalizePage("roles", getFilteredRoles().length);
+    normalizePage("logs", getFilteredLogs().length);
+    renderUsersRoleFilter();
+    renderApiKeyUserOptions();
+    renderPermissionOptions();
+    renderRoleOptions();
+    renderUsers();
+    renderRoles();
+    renderLogsEventFilter();
+    renderLogs();
+    renderApiKeys();
+    renderMetrics();
   }
 
   function bindActions() {
-    window.addEventListener("hashchange", syncRouteFromHash);
+    if (isAdminPage()) {
+      window.addEventListener("hashchange", syncRouteFromHash);
+    }
 
     document.querySelectorAll("[data-route]").forEach(function (button) {
       button.addEventListener("click", function () {
@@ -243,112 +390,161 @@
       });
     });
 
-    document
-      .getElementById("registerForm")
-      .addEventListener("submit", handleRegister);
-    document
-      .getElementById("loginForm")
-      .addEventListener("submit", handleLogin);
-    document
-      .getElementById("logoutButton")
-      .addEventListener("click", handleLogout);
-    document.getElementById("meButton").addEventListener("click", function () {
-      apiCall("/auth/me", { method: "GET", auth: "user" });
+    bindIfExists("registerForm", "submit", handleRegister);
+    bindIfExists("loginForm", "submit", handleLogin);
+    bindIfExists("logoutButton", "click", handleLogout);
+    bindIfExists("sidebarLogoutButton", "click", handleLogout);
+    bindIfExists("openApiKeysButton", "click", function () {
+      openApiKeyWorkspaceForCurrentAdmin();
     });
-
-    document
-      .getElementById("refreshUsersButton")
-      .addEventListener("click", loadUsers);
-    elements.createUserForm.addEventListener("submit", handleCreateUser);
-    elements.usersSearchInput.addEventListener("input", function (event) {
-      state.usersUI.search = event.target.value;
-      state.usersUI.page = 1;
-      renderUsers();
-    });
-    elements.usersStatusFilter.addEventListener("change", function (event) {
-      state.usersUI.status = event.target.value;
-      state.usersUI.page = 1;
-      renderUsers();
-    });
-    elements.usersRoleFilter.addEventListener("change", function (event) {
-      state.usersUI.role = event.target.value;
-      state.usersUI.page = 1;
-      renderUsers();
-    });
-    elements.usersPageSize.addEventListener("change", function (event) {
-      state.usersUI.pageSize = Number(event.target.value);
-      state.usersUI.page = 1;
-      renderUsers();
-    });
-    elements.usersPrevPage.addEventListener("click", function () {
-      changePage("users", -1);
-    });
-    elements.usersNextPage.addEventListener("click", function () {
-      changePage("users", 1);
-    });
-
-    document
-      .getElementById("refreshRolesButton")
-      .addEventListener("click", loadRoles);
-    elements.createRoleForm.addEventListener("submit", handleCreateRole);
-    elements.rolesSearchInput.addEventListener("input", function (event) {
-      state.rolesUI.search = event.target.value;
-      state.rolesUI.page = 1;
-      renderRoles();
-    });
-    elements.rolesPageSize.addEventListener("change", function (event) {
-      state.rolesUI.pageSize = Number(event.target.value);
-      state.rolesUI.page = 1;
-      renderRoles();
-    });
-    elements.rolesPrevPage.addEventListener("click", function () {
-      changePage("roles", -1);
-    });
-    elements.rolesNextPage.addEventListener("click", function () {
-      changePage("roles", 1);
-    });
-
-    document
-      .getElementById("refreshLogsButton")
-      .addEventListener("click", loadLogs);
-    elements.logsSearchInput.addEventListener("input", function (event) {
-      state.logsUI.search = event.target.value;
-      state.logsUI.page = 1;
-      renderLogs();
-    });
-    elements.logsEventFilter.addEventListener("change", function (event) {
-      state.logsUI.event = event.target.value;
-      state.logsUI.page = 1;
-      renderLogs();
-    });
-    elements.logsFetchLimit.addEventListener("change", function (event) {
-      state.logsUI.fetchLimit = Number(event.target.value);
-      state.logsUI.page = 1;
-      loadLogs();
-    });
-    elements.logsPageSize.addEventListener("change", function (event) {
-      state.logsUI.pageSize = Number(event.target.value);
-      state.logsUI.page = 1;
-      renderLogs();
-    });
-    elements.logsPrevPage.addEventListener("click", function () {
-      changePage("logs", -1);
-    });
-    elements.logsNextPage.addEventListener("click", function () {
-      changePage("logs", 1);
-    });
-
-    document
-      .getElementById("explorerForm")
-      .addEventListener("submit", handleExplorerRun);
-    document
-      .getElementById("runSelectedEndpoint")
-      .addEventListener("click", function () {
-        document.getElementById("explorerForm").requestSubmit();
+    bindIfExists("meButton", "click", function () {
+      apiCall("/auth/me", {
+        method: "GET",
+        auth: isAdminPage() ? "admin" : "user",
       });
-    document
-      .getElementById("resetExplorerBody")
-      .addEventListener("click", resetExplorerBody);
+    });
+
+    bindIfExists("refreshUsersButton", "click", loadUsers);
+    if (elements.createUserForm) {
+      elements.createUserForm.addEventListener("submit", handleCreateUser);
+    }
+    if (elements.usersSearchInput) {
+      elements.usersSearchInput.addEventListener("input", function (event) {
+        state.usersUI.search = event.target.value;
+        state.usersUI.page = 1;
+        renderUsers();
+      });
+    }
+    if (elements.usersStatusFilter) {
+      elements.usersStatusFilter.addEventListener("change", function (event) {
+        state.usersUI.status = event.target.value;
+        state.usersUI.page = 1;
+        renderUsers();
+      });
+    }
+    if (elements.usersAccountTypeFilter) {
+      elements.usersAccountTypeFilter.addEventListener(
+        "change",
+        function (event) {
+          state.usersUI.accountType = event.target.value;
+          state.usersUI.page = 1;
+          renderUsers();
+        },
+      );
+    }
+    if (elements.usersRoleFilter) {
+      elements.usersRoleFilter.addEventListener("change", function (event) {
+        state.usersUI.role = event.target.value;
+        state.usersUI.page = 1;
+        renderUsers();
+      });
+    }
+    if (elements.usersPageSize) {
+      elements.usersPageSize.addEventListener("change", function (event) {
+        state.usersUI.pageSize = Number(event.target.value);
+        state.usersUI.page = 1;
+        renderUsers();
+      });
+    }
+    if (elements.usersPrevPage) {
+      elements.usersPrevPage.addEventListener("click", function () {
+        changePage("users", -1);
+      });
+    }
+    if (elements.usersNextPage) {
+      elements.usersNextPage.addEventListener("click", function () {
+        changePage("users", 1);
+      });
+    }
+
+    bindIfExists("refreshRolesButton", "click", loadRoles);
+    if (elements.createRoleForm) {
+      elements.createRoleForm.addEventListener("submit", handleCreateRole);
+    }
+    if (elements.rolesSearchInput) {
+      elements.rolesSearchInput.addEventListener("input", function (event) {
+        state.rolesUI.search = event.target.value;
+        state.rolesUI.page = 1;
+        renderRoles();
+      });
+    }
+    if (elements.rolesPageSize) {
+      elements.rolesPageSize.addEventListener("change", function (event) {
+        state.rolesUI.pageSize = Number(event.target.value);
+        state.rolesUI.page = 1;
+        renderRoles();
+      });
+    }
+    if (elements.rolesPrevPage) {
+      elements.rolesPrevPage.addEventListener("click", function () {
+        changePage("roles", -1);
+      });
+    }
+    if (elements.rolesNextPage) {
+      elements.rolesNextPage.addEventListener("click", function () {
+        changePage("roles", 1);
+      });
+    }
+
+    bindIfExists("refreshLogsButton", "click", loadLogs);
+    bindIfExists("refreshApiKeysButton", "click", loadApiKeys);
+    bindIfExists("reloadAntiBotButton", "click", loadAntiBotChallenge);
+    if (elements.createApiKeyForm) {
+      elements.createApiKeyForm.addEventListener("submit", handleCreateApiKey);
+    }
+    if (elements.antiBotAnswer) {
+      elements.antiBotAnswer.addEventListener("input", function () {
+        updateAntiBotStatus();
+        highlightSelectedAntiBotCard();
+      });
+    }
+    if (elements.logsSearchInput) {
+      elements.logsSearchInput.addEventListener("input", function (event) {
+        state.logsUI.search = event.target.value;
+        state.logsUI.page = 1;
+        renderLogs();
+      });
+    }
+    if (elements.logsEventFilter) {
+      elements.logsEventFilter.addEventListener("change", function (event) {
+        state.logsUI.event = event.target.value;
+        state.logsUI.page = 1;
+        renderLogs();
+      });
+    }
+    if (elements.logsFetchLimit) {
+      elements.logsFetchLimit.addEventListener("change", function (event) {
+        state.logsUI.fetchLimit = Number(event.target.value);
+        state.logsUI.page = 1;
+        loadLogs();
+      });
+    }
+    if (elements.logsPageSize) {
+      elements.logsPageSize.addEventListener("change", function (event) {
+        state.logsUI.pageSize = Number(event.target.value);
+        state.logsUI.page = 1;
+        renderLogs();
+      });
+    }
+    if (elements.logsPrevPage) {
+      elements.logsPrevPage.addEventListener("click", function () {
+        changePage("logs", -1);
+      });
+    }
+    if (elements.logsNextPage) {
+      elements.logsNextPage.addEventListener("click", function () {
+        changePage("logs", 1);
+      });
+    }
+
+    bindIfExists("explorerForm", "submit", handleExplorerRun);
+    bindIfExists("runSelectedEndpoint", "click", function () {
+      const explorerForm = document.getElementById("explorerForm");
+      if (explorerForm) {
+        explorerForm.requestSubmit();
+      }
+    });
+    bindIfExists("resetExplorerBody", "click", resetExplorerBody);
 
     document.querySelectorAll("[data-copy-target]").forEach(function (button) {
       button.addEventListener("click", async function () {
@@ -364,16 +560,56 @@
       });
     });
 
-    elements.confirmModalCancel.addEventListener("click", closeConfirmModal);
-    elements.confirmModalSubmit.addEventListener("click", confirmModalAction);
-    elements.confirmModal.addEventListener("click", function (event) {
-      if (event.target === elements.confirmModal) {
-        closeConfirmModal();
-      }
+    document.querySelectorAll("[data-user-preset]").forEach(function (button) {
+      button.addEventListener("click", function () {
+        applyCreateUserPreset(button.getAttribute("data-user-preset"));
+      });
     });
+
+    document
+      .querySelectorAll("[data-user-filter-shortcut]")
+      .forEach(function (button) {
+        button.addEventListener("click", function () {
+          state.usersUI.accountType = button.getAttribute(
+            "data-user-filter-shortcut",
+          );
+          elements.usersAccountTypeFilter.value = state.usersUI.accountType;
+          setRoute("users");
+          renderUsers();
+        });
+      });
+
+    document
+      .querySelectorAll("[data-route-shortcut]")
+      .forEach(function (button) {
+        button.addEventListener("click", function () {
+          setRoute("dashboard");
+          document
+            .getElementById("createApiKeyForm")
+            .scrollIntoView({ behavior: "smooth", block: "start" });
+        });
+      });
+
+    if (elements.confirmModalCancel) {
+      elements.confirmModalCancel.addEventListener("click", closeConfirmModal);
+    }
+    if (elements.confirmModalSubmit) {
+      elements.confirmModalSubmit.addEventListener("click", confirmModalAction);
+    }
+    if (elements.confirmModal) {
+      elements.confirmModal.addEventListener("click", function (event) {
+        if (event.target === elements.confirmModal) {
+          closeConfirmModal();
+        }
+      });
+    }
   }
 
   function syncRouteFromHash() {
+    if (!isAdminPage()) {
+      return;
+    }
+
     const hash = window.location.hash.replace("#", "");
     const nextRoute = Object.prototype.hasOwnProperty.call(viewMeta, hash)
       ? hash
@@ -383,6 +619,10 @@
   }
 
   function setRoute(route) {
+    if (!isAdminPage()) {
+      return;
+    }
+
     const nextRoute = Object.prototype.hasOwnProperty.call(viewMeta, route)
       ? route
       : "dashboard";
@@ -397,6 +637,14 @@
   }
 
   function renderRoute() {
+    if (!isAdminPage()) {
+      return;
+    }
+
+    if (!hasBackOfficeAccess()) {
+      state.route = "dashboard";
+    }
+
     document.querySelectorAll("[data-view]").forEach(function (section) {
       section.classList.toggle(
         "hidden",
@@ -417,12 +665,35 @@
   }
 
   async function refreshReferenceData() {
-    await Promise.allSettled([
-      loadRoles(),
-      loadPermissions(),
-      loadUsers(),
-      loadLogs(),
-    ]);
+    if (!isAdminPage()) {
+      return;
+    }
+
+    if (state.authFailureHandled) {
+      return;
+    }
+
+    await loadRoles();
+    if (state.authFailureHandled) {
+      return;
+    }
+
+    await loadPermissions();
+    if (state.authFailureHandled) {
+      return;
+    }
+
+    await loadUsers();
+    if (state.authFailureHandled) {
+      return;
+    }
+
+    await loadLogs();
+    if (state.authFailureHandled) {
+      return;
+    }
+
+    await loadApiKeys();
     renderMetrics();
   }
 
@@ -443,40 +714,111 @@
   async function handleLogin(event) {
     event.preventDefault();
     const payload = formToObject(event.currentTarget);
+    payload.anti_bot_token = state.antiBot ? state.antiBot.token : "";
     const result = await apiCall("/auth/login", {
       method: "POST",
       body: payload,
     });
 
     if (!result || !result.success || !result.data || !result.data.token) {
+      if (result && result.error && /^anti_bot/.test(result.error.code || "")) {
+        elements.antiBotAnswer.value = "";
+        await loadAntiBotChallenge();
+      }
       return;
     }
 
-    const tokenKey = document.getElementById("useAdminToken").checked
-      ? "banamur_admin_token"
-      : "banamur_user_token";
+    const useAdminTokenCheckbox = document.getElementById("useAdminToken");
+    const tokenKey =
+      useAdminTokenCheckbox && !isLoginPage() && !useAdminTokenCheckbox.checked
+        ? "banamur_user_token"
+        : "banamur_admin_token";
+    state.authFailureHandled = false;
+    state.currentSessionUser = result.data.user || null;
     localStorage.setItem(tokenKey, result.data.token);
+    if (tokenKey === "banamur_admin_token") {
+      writeCookie("banamur_admin_token", result.data.token, 1);
+    }
     renderTokens();
+    if (elements.antiBotAnswer) {
+      elements.antiBotAnswer.value = "";
+    }
+    await loadAntiBotChallenge();
 
     if (tokenKey === "banamur_admin_token") {
-      await refreshReferenceData();
+      if (isAdminPage()) {
+        setRoute("dashboard");
+        await refreshReferenceData();
+      } else {
+        window.location.href = adminUrl;
+      }
     }
   }
 
-  async function handleLogout() {
-    const authType = localStorage.getItem("banamur_user_token")
-      ? "user"
-      : localStorage.getItem("banamur_admin_token")
-        ? "admin"
+  async function loadAntiBotChallenge() {
+    if (
+      !elements.antiBotPrompt ||
+      !elements.antiBotGrid ||
+      !elements.antiBotStatus
+    ) {
+      return;
+    }
+
+    const result = await apiCall("/auth/anti-bot-challenge", {
+      method: "GET",
+      silent: true,
+      toastSuccess: false,
+    });
+
+    state.antiBot =
+      result &&
+      result.success &&
+      result.data &&
+      result.data.anti_bot &&
+      Array.isArray(result.data.anti_bot.cards)
+        ? result.data.anti_bot
         : null;
 
-    if (authType) {
-      await apiCall("/auth/logout", { method: "POST", auth: authType });
+    renderAntiBotChallenge();
+  }
+
+  async function handleLogout() {
+    const logoutTargets = [];
+
+    if (
+      localStorage.getItem("banamur_admin_token") ||
+      readCookie("banamur_admin_token")
+    ) {
+      logoutTargets.push("admin");
+    }
+
+    if (localStorage.getItem("banamur_user_token")) {
+      logoutTargets.push("user");
+    }
+
+    for (const authType of logoutTargets) {
+      await apiCall("/auth/logout", {
+        method: "POST",
+        auth: authType,
+        silent: true,
+        toastError: false,
+        suppressAuthFailureHandling: true,
+      });
     }
 
     localStorage.removeItem("banamur_user_token");
-    localStorage.removeItem("banamur_admin_token");
+    clearAdminSessionState();
+    localStorage.removeItem("banamur_api_key");
+    state.authFailureHandled = false;
+    state.currentSessionUser = null;
     renderTokens();
+    showToast("success", "Session admin deconnectee.");
+    if (isAdminPage()) {
+      window.location.href = loginUrl;
+      return;
+    }
+
+    setRoute("dashboard");
     await refreshReferenceData();
   }
 
@@ -490,6 +832,7 @@
       result && result.success && Array.isArray(result.data) ? result.data : [];
     normalizePage("users", getFilteredUsers().length);
     renderUsersRoleFilter();
+    renderApiKeyUserOptions();
     renderUsers();
     renderMetrics();
   }
@@ -534,6 +877,18 @@
     renderMetrics();
   }
 
+  async function loadApiKeys() {
+    const result = await apiCall("/api-keys", {
+      method: "GET",
+      auth: "admin",
+      silent: true,
+    });
+    state.apiKeys =
+      result && result.success && Array.isArray(result.data) ? result.data : [];
+    renderApiKeyUserOptions();
+    renderApiKeys();
+  }
+
   async function handleCreateUser(event) {
     event.preventDefault();
     const payload = formToObject(event.currentTarget);
@@ -546,8 +901,28 @@
     });
 
     if (result && result.success) {
+      if (
+        state.createUserPreset === "developer" &&
+        elements.createUserApiKeyToggle.checked &&
+        result.data &&
+        result.data.id
+      ) {
+        await apiCall("/api-keys", {
+          method: "POST",
+          auth: "admin",
+          body: {
+            name:
+              elements.createUserApiKeyName.value.trim() ||
+              "Cle developpeur initiale",
+            user_id: result.data.id,
+            expires_in_days: elements.createUserApiKeyDays.value.trim() || 30,
+          },
+        });
+      }
+
       event.currentTarget.reset();
-      await Promise.all([loadUsers(), loadLogs()]);
+      applyCreateUserPreset(state.createUserPreset);
+      await Promise.all([loadUsers(), loadApiKeys(), loadLogs()]);
     }
   }
 
@@ -565,6 +940,36 @@
     if (result && result.success) {
       event.currentTarget.reset();
       await Promise.all([loadRoles(), loadPermissions(), loadLogs()]);
+    }
+  }
+
+  async function handleCreateApiKey(event) {
+    event.preventDefault();
+    const payload = formToObject(event.currentTarget);
+
+    if (!payload.user_id) {
+      delete payload.user_id;
+    }
+
+    if (!payload.expires_in_days) {
+      delete payload.expires_in_days;
+    }
+
+    const result = await apiCall("/api-keys", {
+      method: "POST",
+      auth: "admin",
+      body: payload,
+    });
+
+    if (result && result.success && result.data && result.data.plain_key) {
+      localStorage.setItem("banamur_api_key", result.data.plain_key);
+      state.apiKeyDraftUserId = null;
+      renderTokens();
+      event.currentTarget.reset();
+      if (elements.apiKeyUserSelect) {
+        elements.apiKeyUserSelect.value = "";
+      }
+      await Promise.all([loadApiKeys(), loadLogs()]);
     }
   }
 
@@ -594,28 +999,162 @@
   function renderTokens() {
     const userToken = getToken("user");
     const adminToken = getToken("admin");
+    const apiKey = getToken("apiKey");
     const userPreview = userToken ? shortenToken(userToken) : "aucun";
     const adminPreview = adminToken ? shortenToken(adminToken) : "aucun";
+    const apiKeyPreview = apiKey ? shortenToken(apiKey) : "aucune";
 
-    elements.userTokenPreview.textContent =
-      userToken || "Aucun token utilisateur";
-    elements.adminTokenPreview.textContent = adminToken || "Aucun token admin";
-    elements.sidebarUserToken.textContent = userPreview;
-    elements.sidebarAdminToken.textContent = adminPreview;
-    elements.sessionStatus.textContent = adminToken
-      ? "Admin connecte"
-      : userToken
-        ? "Utilisateur connecte"
-        : "Non connecte";
+    if (elements.userTokenPreview) {
+      elements.userTokenPreview.textContent =
+        userToken || "Aucun JWT utilisateur";
+    }
+    if (elements.adminTokenPreview) {
+      elements.adminTokenPreview.textContent = adminToken || "Aucun JWT admin";
+    }
+    if (elements.apiKeyPreview) {
+      elements.apiKeyPreview.textContent = apiKey || "Aucune cle API";
+    }
+    if (elements.sidebarUserToken) {
+      elements.sidebarUserToken.textContent = userPreview;
+    }
+    if (elements.sidebarAdminToken) {
+      elements.sidebarAdminToken.textContent = adminPreview;
+    }
+    if (elements.sidebarApiKey) {
+      elements.sidebarApiKey.textContent = apiKeyPreview;
+    }
+    if (elements.sessionStatus) {
+      elements.sessionStatus.textContent = adminToken
+        ? "Admin connecte"
+        : userToken
+          ? "Utilisateur connecte"
+          : apiKey
+            ? "Acces via cle API"
+            : "Non connecte";
+    }
+
+    if (elements.sessionIdentity) {
+      elements.sessionIdentity.textContent = formatSessionIdentity(
+        state.currentSessionUser,
+      );
+    }
+
+    if (elements.sessionApiPermissions) {
+      elements.sessionApiPermissions.textContent = formatApiPermissionStatus(
+        state.currentSessionUser,
+      );
+    }
+
+    renderAccessMode();
+  }
+
+  function renderAccessMode() {
+    const hasAdminAccess = hasBackOfficeAccess();
+
+    if (isAdminPage() && !hasAdminAccess) {
+      window.location.replace(loginUrl);
+      return;
+    }
+
+    if (elements.loginGateHero) {
+      elements.loginGateHero.classList.toggle(
+        "hidden",
+        hasAdminAccess && isAdminPage(),
+      );
+    }
+
+    if (elements.sidebarShell) {
+      elements.sidebarShell.classList.toggle("hidden-by-lock", !hasAdminAccess);
+    }
+    if (elements.workspaceHeader) {
+      elements.workspaceHeader.classList.toggle(
+        "hidden-by-lock",
+        !hasAdminAccess,
+      );
+    }
+
+    document
+      .querySelectorAll(".auth-private-block, .auth-session-panel")
+      .forEach(function (node) {
+        node.classList.toggle("hidden-by-lock", !hasAdminAccess);
+      });
+
+    const useAdminTokenCheckbox = document.getElementById("useAdminToken");
+    if (!hasAdminAccess && useAdminTokenCheckbox) {
+      useAdminTokenCheckbox.checked = true;
+    }
   }
 
   function renderMetrics() {
+    if (!elements.metricUsers) {
+      return;
+    }
+
+    const adminUsers = getAdminUsers();
+    const developerUsers = getDeveloperUsers();
     elements.metricUsers.textContent = String(state.users.length);
     elements.metricRoles.textContent = String(state.roles.length);
     elements.metricLogs.textContent = String(state.logs.length);
+    elements.metricAdmins.textContent = String(adminUsers.length);
+    elements.metricDevelopers.textContent = String(developerUsers.length);
+    elements.metricApiKeys.textContent = String(state.apiKeys.length);
+    elements.dashboardAdminCount.textContent = String(adminUsers.length);
+    elements.dashboardDeveloperCount.textContent = String(
+      developerUsers.length,
+    );
+    elements.dashboardApiKeysCount.textContent = String(state.apiKeys.length);
+  }
+
+  function renderAntiBotChallenge() {
+    if (!state.antiBot) {
+      elements.antiBotPrompt.textContent =
+        "Impossible de charger le controle anti-robot. Recharge la page.";
+      elements.antiBotGrid.innerHTML =
+        '<div class="empty-state">Controle indisponible.</div>';
+      elements.antiBotStatus.textContent = "Defi indisponible";
+      elements.antiBotStatus.classList.remove("ready");
+      return;
+    }
+
+    elements.antiBotPrompt.textContent = state.antiBot.prompt;
+    elements.antiBotGrid.innerHTML = state.antiBot.cards
+      .map(function (card) {
+        return (
+          '<button type="button" class="anti-bot-card" data-anti-bot-code="' +
+          escapeHtml(card.code) +
+          '"><span class="anti-bot-code">' +
+          escapeHtml(card.code) +
+          '</span><div class="anti-bot-meta"><span><strong>Ville</strong> ' +
+          escapeHtml(card.city) +
+          "</span><span><strong>Symbole</strong> " +
+          escapeHtml(card.symbol) +
+          "</span><span><strong>Teinte</strong> " +
+          escapeHtml(card.tone) +
+          "</span></div></button>"
+        );
+      })
+      .join("");
+
+    elements.antiBotGrid
+      .querySelectorAll("[data-anti-bot-code]")
+      .forEach(function (button) {
+        button.addEventListener("click", function () {
+          elements.antiBotAnswer.value =
+            button.getAttribute("data-anti-bot-code");
+          updateAntiBotStatus();
+          highlightSelectedAntiBotCard();
+        });
+      });
+
+    updateAntiBotStatus();
+    highlightSelectedAntiBotCard();
   }
 
   function renderUsersRoleFilter() {
+    if (!elements.usersRoleFilter) {
+      return;
+    }
+
     const currentValue = state.usersUI.role;
     const options = ['<option value="all">Tous les roles</option>'].concat(
       state.roles.map(function (role) {
@@ -633,6 +1172,10 @@
   }
 
   function renderRoleOptions() {
+    if (!elements.userRolesOptions) {
+      return;
+    }
+
     elements.userRolesOptions.innerHTML = state.roles.length
       ? state.roles
           .map(function (role) {
@@ -647,6 +1190,10 @@
   }
 
   function renderPermissionOptions() {
+    if (!elements.permissionsOptions) {
+      return;
+    }
+
     elements.permissionsOptions.innerHTML = state.permissions.length
       ? state.permissions
           .map(function (permission) {
@@ -660,7 +1207,102 @@
       : '<div class="empty-state">Aucune permission chargee.</div>';
   }
 
+  function renderApiKeyUserOptions() {
+    if (!elements.apiKeyUserSelect) {
+      return;
+    }
+
+    const currentValue = state.apiKeyDraftUserId
+      ? String(state.apiKeyDraftUserId)
+      : elements.apiKeyUserSelect.value;
+    elements.apiKeyUserSelect.innerHTML = [
+      '<option value="">Utilisateur connecte</option>',
+    ]
+      .concat(
+        state.users.map(function (user) {
+          return (
+            '<option value="' +
+            escapeHtml(String(user.id)) +
+            '">' +
+            escapeHtml(
+              user.email + " - " + (user.first_name || user.username),
+            ) +
+            "</option>"
+          );
+        }),
+      )
+      .join("");
+
+    if (currentValue) {
+      elements.apiKeyUserSelect.value = currentValue;
+    }
+  }
+
+  function renderApiKeys() {
+    if (!elements.apiKeysList) {
+      return;
+    }
+
+    if (!state.apiKeys.length) {
+      elements.apiKeysList.innerHTML =
+        '<div class="empty-state">Connecte un admin puis cree une premiere cle API.</div>';
+      return;
+    }
+
+    elements.apiKeysList.innerHTML = state.apiKeys
+      .map(function (apiKey) {
+        const ownerLabel =
+          apiKey.user && apiKey.user.email
+            ? apiKey.user.email
+            : "Utilisateur inconnu";
+
+        return (
+          '<article class="card-subtle"><div class="flex flex-wrap items-start justify-between gap-3"><div><div class="subcard-title">' +
+          escapeHtml(apiKey.name) +
+          '</div><p class="subcard-text">' +
+          escapeHtml(ownerLabel) +
+          '</p></div><button type="button" class="chip-button" data-api-key-delete="' +
+          escapeHtml(String(apiKey.id)) +
+          '">Revoquer</button></div><div class="mt-4 grid gap-2 text-sm text-slate-600"><div><span class="font-medium text-slate-800">Prefixe :</span> ' +
+          escapeHtml(apiKey.key_prefix) +
+          '</div><div><span class="font-medium text-slate-800">Creee :</span> ' +
+          escapeHtml(apiKey.created_at || "-") +
+          '</div><div><span class="font-medium text-slate-800">Expire :</span> ' +
+          escapeHtml(apiKey.expires_at || "Jamais") +
+          '</div><div><span class="font-medium text-slate-800">Derniere utilisation :</span> ' +
+          escapeHtml(apiKey.last_used_at || "Jamais") +
+          "</div></div></article>"
+        );
+      })
+      .join("");
+
+    elements.apiKeysList
+      .querySelectorAll("[data-api-key-delete]")
+      .forEach(function (button) {
+        button.addEventListener("click", function () {
+          const id = Number(button.getAttribute("data-api-key-delete"));
+          const apiKey = state.apiKeys.find(function (item) {
+            return item.id === id;
+          });
+
+          openConfirmModal(
+            "Revoquer cette cle API ?",
+            "Cette action bloquera immediatement " +
+              (apiKey ? apiKey.name : "la cle selectionnee") +
+              ".",
+            function () {
+              deleteApiKey(id);
+            },
+          );
+        });
+      });
+  }
+
   function renderUsers() {
+    if (!elements.usersTableBody) {
+      return;
+    }
+
     const filtered = getFilteredUsers();
     const pagination = paginate(
       filtered,
@@ -670,7 +1312,7 @@
 
     if (!filtered.length) {
       elements.usersTableBody.innerHTML =
-        '<tr><td colspan="5" class="px-5 py-12 text-center text-slate-400">Aucun utilisateur ne correspond a ces filtres.</td></tr>';
+        '<tr><td colspan="6" class="px-5 py-12 text-center text-slate-400">Aucun utilisateur ne correspond a ces filtres.</td></tr>';
       renderPageInfo(
         elements.usersPageInfo,
         elements.usersPrevPage,
@@ -698,6 +1340,9 @@
   }
 
   function renderUserRow(user) {
+    const accountType = getUserAccountType(user);
+    const accountTypeLabel = getUserAccountTypeLabel(accountType);
+    const apiKeyCount = getApiKeyCountForUser(user.id);
     const roles = (user.roles || [])
       .map(function (role) {
         return (
@@ -715,6 +1360,15 @@
       escapeHtml(user.email) +
       "</div></td>" +
       '<td class="px-5 py-4"><span class="badge ' +
+      (accountType === "admin"
+        ? "badge-ok"
+        : accountType === "no-role"
+          ? "badge-warn"
+          : "badge-soft") +
+      '">' +
+      escapeHtml(accountTypeLabel) +
+      "</span></td>" +
+      '<td class="px-5 py-4"><span class="badge ' +
       statusBadgeClass(user.status) +
       '">' +
       escapeHtml(user.status) +
@@ -726,9 +1380,14 @@
       escapeHtml(user.last_login_at || "Jamais") +
       "</td>" +
       '<td class="px-5 py-4 text-right"><div class="flex justify-end gap-2">' +
-      '<button type="button" class="chip-button" data-user-edit="' +
+      '<button type="button" class="chip-button" data-user-manage-roles="' +
       escapeHtml(String(user.id)) +
-      '">Inline edit</button>' +
+      '">Modifier roles</button>' +
+      '<button type="button" class="chip-button" data-user-manage-api-key="' +
+      escapeHtml(String(user.id)) +
+      '">API key (' +
+      escapeHtml(String(apiKeyCount)) +
+      ")</button>" +
       '<button type="button" class="chip-button" data-user-delete="' +
       escapeHtml(String(user.id)) +
       '">Supprimer</button></div></td>' +
@@ -740,7 +1399,7 @@
 
     return (
       baseRow +
-      '<tr><td colspan="5" class="px-5 pb-5">' +
+      '<tr><td colspan="6" class="px-5 pb-5">' +
       renderInlineUserEditor(user) +
       "</td></tr>"
     );
@@ -796,12 +1455,21 @@
 
   function bindUsersTableActions() {
     elements.usersTableBody
-      .querySelectorAll("[data-user-edit]")
+      .querySelectorAll("[data-user-manage-roles]")
       .forEach(function (button) {
         button.addEventListener("click", function () {
-          const id = Number(button.getAttribute("data-user-edit"));
+          const id = Number(button.getAttribute("data-user-manage-roles"));
           state.editingUserId = state.editingUserId === id ? null : id;
           renderUsers();
+        });
+      });
+
+    elements.usersTableBody
+      .querySelectorAll("[data-user-manage-api-key]")
+      .forEach(function (button) {
+        button.addEventListener("click", function () {
+          const id = Number(button.getAttribute("data-user-manage-api-key"));
+          openApiKeyWorkspaceForUser(id);
         });
       });
 
@@ -879,6 +1547,10 @@
   }
 
   function renderRoles() {
+    if (!elements.rolesGrid) {
+      return;
+    }
+
     const filtered = getFilteredRoles();
     const pagination = paginate(
       filtered,
@@ -1065,7 +1737,25 @@
     }
   }
 
+  async function deleteApiKey(id) {
+    const result = await apiCall(
+      "/api-keys/" + encodeURIComponent(String(id)),
+      {
+        method: "DELETE",
+        auth: "admin",
+      },
+    );
+
+    if (result && result.success) {
+      await Promise.all([loadApiKeys(), loadLogs()]);
+    }
+  }
+
   function renderLogsEventFilter() {
+    if (!elements.logsEventFilter) {
+      return;
+    }
+
     const uniqueEvents = Array.from(
       new Set(
         state.logs.map(function (log) {
@@ -1094,6 +1784,10 @@
   }
 
   function renderLogs() {
+    if (!elements.logsTimeline) {
+      return;
+    }
+
     const filtered = getFilteredLogs();
     const pagination = paginate(
       filtered,
@@ -1157,6 +1851,10 @@
   }
 
   function renderEndpointCatalog() {
+    if (!elements.endpointList) {
+      return;
+    }
+
     elements.endpointList.innerHTML = state.endpointCatalog
       .map(function (endpointConfig) {
         return (
@@ -1185,6 +1883,10 @@
   }
 
   function selectEndpoint(key) {
+    if (!elements.endpointList || !elements.explorerMethod) {
+      return;
+    }
+
     state.explorerSelection =
       state.endpointCatalog.find(function (item) {
         return item.key === key;
@@ -1210,7 +1912,7 @@
   }
 
   function resetExplorerBody() {
-    if (state.explorerSelection) {
+    if (state.explorerSelection && elements.explorerBody) {
       elements.explorerBody.value = state.explorerSelection.body;
     }
   }
@@ -1219,28 +1921,70 @@
     const method = options.method || "GET";
     const headers = { Accept: "application/json" };
     const token = getToken(options.auth);
+    const shouldUseCookieSession =
+      isAdminPage() &&
+      options.auth &&
+      options.auth !== "none" &&
+      options.auth !== "apiKey" &&
+      !token &&
+      !!readCookie("banamur_admin_token");
 
     if (options.auth && options.auth !== "none") {
-      if (!token) {
+      if (!token && !shouldUseCookieSession) {
         const missingTokenPayload = {
           success: false,
-          error: { message: "Token manquant pour cette action." },
+          error: {
+            message:
+              options.auth === "apiKey"
+                ? "Cle API manquante pour cette action."
+                : "Token manquant pour cette action.",
+          },
         };
         if (!options.silent) {
           setResponse(missingTokenPayload);
         }
         return missingTokenPayload;
       }
-      headers.Authorization = "Bearer " + token;
+
+      if (options.auth === "apiKey") {
+        headers["X-API-Key"] = token;
+      } else if (!shouldUseCookieSession) {
+        headers.Authorization = "Bearer " + token;
+      }
     }
 
-    const fetchOptions = { method: method, headers: headers };
+    const fetchOptions = {
+      method: method,
+      headers: headers,
+      credentials: "same-origin",
+    };
     if (options.body !== undefined && method !== "GET" && method !== "DELETE") {
       headers["Content-Type"] = "application/json";
       fetchOptions.body = JSON.stringify(options.body);
     }
 
-    const response = await fetch(state.apiBaseUrl + path, fetchOptions);
+    let response;
+    try {
+      response = await fetch(state.apiBaseUrl + path, fetchOptions);
+    } catch (error) {
+      const payload = {
+        success: false,
+        error: {
+          code: "network_error",
+          message: "Impossible de joindre l'API.",
+        },
+      };
+
+      if (!options.silent) {
+        setResponse(payload);
+      }
+      if (options.toastError !== false) {
+        showToast("error", payload.error.message);
+      }
+
+      return payload;
+    }
+
     let payload;
 
     try {
@@ -1259,14 +2003,101 @@
       setResponse(payload);
     }
 
+    if (
+      !options.suppressAuthFailureHandling &&
+      shouldHandleAuthenticationFailure(payload, options)
+    ) {
+      handleAuthenticationFailure(payload);
+      return payload;
+    }
+
+    if (!payload.success && options.toastError !== false) {
+      showToast(
+        "error",
+        payload.error && payload.error.message
+          ? payload.error.message
+          : "Action impossible.",
+      );
+    }
+
+    if (payload.success && !options.silent && options.toastSuccess !== false) {
+      showToast("success", extractSuccessMessage(payload, method, path));
+    }
+
     return payload;
   }
 
   function setResponse(payload) {
-    elements.responseViewer.textContent = JSON.stringify(payload, null, 2);
+    if (elements.responseViewer) {
+      elements.responseViewer.textContent = JSON.stringify(payload, null, 2);
+    }
+  }
+
+  function shouldHandleAuthenticationFailure(payload, options) {
+    if (!payload || payload.success || !payload.error) {
+      return false;
+    }
+
+    if (!options.auth || options.auth === "none" || options.auth === "apiKey") {
+      return false;
+    }
+
+    return [
+      "invalid_token",
+      "missing_authentication",
+      "missing_authorization_header",
+      "missing_token",
+    ].includes(payload.error.code);
+  }
+
+  function handleAuthenticationFailure(payload) {
+    if (state.authFailureHandled) {
+      return;
+    }
+
+    state.authFailureHandled = true;
+    setResponse(payload);
+
+    const message =
+      payload.error && payload.error.message
+        ? payload.error.message
+        : "Session invalide.";
+    showToast("error", message);
+
+    if (isAdminPage()) {
+      document
+        .querySelectorAll(".auth-private-block, .auth-session-panel")
+        .forEach(function (node) {
+          node.classList.add("hidden-by-lock");
+        });
+    }
+  }
+
+  function showToast(type, message) {
+    if (!elements.toastStack) {
+      return;
+    }
+
+    const toast = document.createElement("div");
+    toast.className = "toast " + type;
+    toast.innerHTML =
+      '<div class="toast-title">' +
+      escapeHtml(type === "error" ? "Attention" : "Succes") +
+      '</div><div class="toast-message">' +
+      escapeHtml(message) +
+      "</div>";
+    elements.toastStack.appendChild(toast);
+
+    window.setTimeout(function () {
+      toast.remove();
+    }, 4200);
   }
 
   function openConfirmModal(title, message, action) {
+    if (!elements.confirmModal) {
+      return;
+    }
+
     state.confirmAction = action;
     elements.confirmModalTitle.textContent = title;
     elements.confirmModalMessage.textContent = message;
@@ -1274,6 +2105,10 @@
   }
 
   function closeConfirmModal() {
+    if (!elements.confirmModal) {
+      return;
+    }
+
     state.confirmAction = null;
     elements.confirmModal.classList.add("hidden");
   }
@@ -1379,13 +2214,16 @@
       const searchMatch = search === "" || text.includes(search);
       const statusMatch =
         state.usersUI.status === "all" || user.status === state.usersUI.status;
+      const accountTypeMatch =
+        state.usersUI.accountType === "all" ||
+        getUserAccountType(user) === state.usersUI.accountType;
       const roleMatch =
         state.usersUI.role === "all" ||
         roles.some(function (role) {
           return role.code === state.usersUI.role;
         });
 
-      return searchMatch && statusMatch && roleMatch;
+      return searchMatch && statusMatch && accountTypeMatch && roleMatch;
     });
   }
 
@@ -1441,15 +2279,304 @@
 
   function getToken(type) {
     if (type === "admin") {
-      return localStorage.getItem("banamur_admin_token");
+      return getAdminSessionToken();
     }
     if (type === "user") {
       return (
-        localStorage.getItem("banamur_user_token") ||
-        localStorage.getItem("banamur_admin_token")
+        localStorage.getItem("banamur_user_token") || getAdminSessionToken()
       );
     }
+    if (type === "apiKey") {
+      return localStorage.getItem("banamur_api_key");
+    }
     return null;
+  }
+
+  function hasBackOfficeAccess() {
+    return !!getAdminSessionToken();
+  }
+
+  function bindIfExists(id, eventName, handler) {
+    const element = document.getElementById(id);
+    if (element) {
+      element.addEventListener(eventName, handler);
+    }
+  }
+
+  function writeCookie(name, value, days) {
+    const expires = new Date(Date.now() + days * 86400000).toUTCString();
+    document.cookie =
+      name +
+      "=" +
+      encodeURIComponent(value) +
+      "; expires=" +
+      expires +
+      "; path=/; SameSite=Lax";
+  }
+
+  function clearCookie(name) {
+    document.cookie =
+      name + "=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; SameSite=Lax";
+  }
+
+  function readCookie(name) {
+    const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const match = document.cookie.match(
+      new RegExp("(?:^|; )" + escapedName + "=([^;]*)"),
+    );
+
+    return match ? decodeURIComponent(match[1]) : "";
+  }
+
+  function getAdminSessionToken() {
+    const bootToken = window.BANAMUR_DASHBOARD.bootAdminToken || "";
+    const cookieToken = readCookie("banamur_admin_token");
+    const localToken = localStorage.getItem("banamur_admin_token") || "";
+    const preferredToken = cookieToken || localToken || bootToken;
+
+    if (!preferredToken) {
+      return null;
+    }
+
+    if (preferredToken !== localToken) {
+      try {
+        localStorage.setItem("banamur_admin_token", preferredToken);
+      } catch (error) {
+        return preferredToken;
+      }
+    }
+
+    if (preferredToken !== cookieToken && preferredToken === bootToken) {
+      writeCookie("banamur_admin_token", preferredToken, 1);
+    }
+
+    return preferredToken;
+  }
+
+  function clearAdminSessionState() {
+    try {
+      localStorage.removeItem("banamur_admin_token");
+    } catch (error) {}
+
+    clearCookie("banamur_admin_token");
+
+    if (window.BANAMUR_DASHBOARD) {
+      window.BANAMUR_DASHBOARD.bootAdminToken = "";
+      window.BANAMUR_DASHBOARD.bootAdminUser = null;
+    }
+  }
+
+  function syncAdminSessionToken() {
+    if (!isAdminPage()) {
+      return;
+    }
+
+    getAdminSessionToken();
+  }
+
+  function sanitizeLoginPageSession() {
+    if (readCookie("banamur_admin_token")) {
+      return;
+    }
+
+    localStorage.removeItem("banamur_admin_token");
+    localStorage.removeItem("banamur_user_token");
+  }
+
+  function isLoginPage() {
+    return pageKind === "login";
+  }
+
+  function isAdminPage() {
+    return pageKind === "admin";
+  }
+
+  function applyCreateUserPreset(type) {
+    state.createUserPreset = type === "admin" ? "admin" : "developer";
+
+    const hint =
+      state.createUserPreset === "admin"
+        ? "Preset admin: active, role ADMIN coche. Ideal pour les superviseurs du back-office."
+        : "Preset developpeur: role USER coche, option de cle API disponible juste apres creation.";
+    elements.createUserPresetHint.textContent = hint;
+    elements.developerAccessFields.classList.toggle(
+      "hidden",
+      state.createUserPreset !== "developer",
+    );
+
+    elements.createUserForm.querySelector('select[name="status"]').value =
+      "active";
+
+    elements.userRolesOptions
+      .querySelectorAll('input[type="checkbox"]')
+      .forEach(function (input) {
+        input.checked =
+          state.createUserPreset === "admin"
+            ? input.value === "ADMIN"
+            : input.value === "USER";
+      });
+  }
+
+  function getUserAccountType(user) {
+    const roleCodes = getUserRoleCodes(user);
+
+    return roleCodes.includes("ADMIN") || roleCodes.includes("SUPER_ADMIN")
+      ? "admin"
+      : roleCodes.length === 0
+        ? "no-role"
+        : "developer";
+  }
+
+  function getUserRoleCodes(user) {
+    return (user.roles || []).map(function (role) {
+      return role.code;
+    });
+  }
+
+  function getUserAccountTypeLabel(accountType) {
+    if (accountType === "admin") {
+      return "admin";
+    }
+
+    if (accountType === "no-role") {
+      return "sans role";
+    }
+
+    return "developpeur";
+  }
+
+  function getAdminUsers() {
+    return state.users.filter(function (user) {
+      return getUserAccountType(user) === "admin";
+    });
+  }
+
+  function getDeveloperUsers() {
+    return state.users.filter(function (user) {
+      return getUserAccountType(user) === "developer";
+    });
+  }
+
+  function getApiKeyCountForUser(userId) {
+    return state.apiKeys.filter(function (apiKey) {
+      return Number(apiKey.user_id) === Number(userId);
+    }).length;
+  }
+
+  function openApiKeyWorkspaceForUser(userId) {
+    const user = state.users.find(function (item) {
+      return item.id === userId;
+    });
+
+    state.apiKeyDraftUserId = userId;
+    setRoute("dashboard");
+    renderRoute();
+    renderApiKeyUserOptions();
+
+    if (user && elements.createApiKeyForm) {
+      const nameInput =
+        elements.createApiKeyForm.querySelector('[name="name"]');
+      if (nameInput && !nameInput.value.trim()) {
+        nameInput.value =
+          "Cle API - " + (user.email || user.username || userId);
+      }
+    }
+
+    focusApiKeyWorkspace();
+  }
+
+  function openApiKeyWorkspaceForCurrentAdmin() {
+    if (state.currentSessionUser && state.currentSessionUser.id) {
+      openApiKeyWorkspaceForUser(state.currentSessionUser.id);
+      return;
+    }
+
+    setRoute("dashboard");
+    renderRoute();
+    focusApiKeyWorkspace();
+  }
+
+  function focusApiKeyWorkspace() {
+    window.requestAnimationFrame(function () {
+      if (elements.createApiKeyForm) {
+        elements.createApiKeyForm.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
+      }
+
+      if (elements.apiKeyUserSelect) {
+        elements.apiKeyUserSelect.focus();
+      }
+    });
+  }
+
+  function formatSessionIdentity(user) {
+    if (!user) {
+      return "Profil non charge.";
+    }
+
+    const identity = user.email || user.username || "Utilisateur inconnu";
+    const roleCodes = getUserRoleCodes(user);
+
+    if (roleCodes.length === 0) {
+      return identity + " | roles: aucun";
+    }
+
+    return identity + " | roles: " + roleCodes.join(", ");
+  }
+
+  function formatApiPermissionStatus(user) {
+    if (!user) {
+      return "Permissions API: profil non charge.";
+    }
+
+    const permissionCodes = (user.permissions || []).map(function (permission) {
+      return permission.code;
+    });
+
+    const canReadApiKeys = permissionCodes.includes("api_key.read");
+    const canManageApiKeys = permissionCodes.includes("api_key.manage");
+
+    return (
+      "Permissions API: lecture " +
+      (canReadApiKeys ? "autorisee" : "refusee") +
+      " | generation/revocation " +
+      (canManageApiKeys ? "autorisee" : "refusee")
+    );
+  }
+
+  function updateAntiBotStatus() {
+    const value = elements.antiBotAnswer.value.trim().toUpperCase();
+    if (value === "") {
+      elements.antiBotStatus.textContent =
+        "Clique une carte puis verifie le code";
+      elements.antiBotStatus.classList.remove("ready");
+      return;
+    }
+
+    elements.antiBotStatus.textContent = "Code selectionne : " + value;
+    elements.antiBotStatus.classList.add("ready");
+  }
+
+  function highlightSelectedAntiBotCard() {
+    const selectedCode = elements.antiBotAnswer.value.trim().toUpperCase();
+    elements.antiBotGrid
+      .querySelectorAll("[data-anti-bot-code]")
+      .forEach(function (button) {
+        button.classList.toggle(
+          "is-active",
+          button.getAttribute("data-anti-bot-code") === selectedCode,
+        );
+      });
+  }
+
+  function extractSuccessMessage(payload, method, path) {
+    if (payload && payload.data && typeof payload.data.message === "string") {
+      return payload.data.message;
+    }
+
+    return method + " " + path + " execute avec succes.";
   }
 
   function renderStatusOptions(value) {

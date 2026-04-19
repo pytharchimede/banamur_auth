@@ -1,0 +1,5 @@
+RewriteEngine On
+
+RewriteRule ^$ login.php [QSA,L]
+RewriteRule ^login/?$ login.php [QSA,L]
+RewriteRule ^admin/?$ admin.php [QSA,L]

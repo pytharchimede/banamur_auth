@@ -13,7 +13,7 @@ class AuthorizationMiddleware
 
     public function authorize(\ApiRequest $request, array $requirements = [])
     {
-        $identity = $this->authService->authenticateToken($request->getBearerToken());
+        $identity = $this->authService->authenticateRequest($request);
         $request->setAuthenticatedIdentity($identity);
 
         $roleCodes = $identity['role_codes'];
