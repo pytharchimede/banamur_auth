@@ -23,12 +23,32 @@
       "value": ""
     },
     {
+      "key": "apiKeyId",
+      "value": "1"
+    },
+    {
       "key": "userId",
       "value": "1"
     },
     {
       "key": "roleId",
       "value": "1"
+    },
+    {
+      "key": "adminIdentifier",
+      "value": "admin"
+    },
+    {
+      "key": "adminPassword",
+      "value": "admin"
+    },
+    {
+      "key": "userIdentifier",
+      "value": "alice@example.com"
+    },
+    {
+      "key": "userPassword",
+      "value": "motdepasse123"
     }
   ],
   "item": [
@@ -95,7 +115,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"identifier\": \"alice@example.com\",\n  \"password\": \"motdepasse123\"\n}"
+              "raw": "{\n  \"identifier\": \"{{userIdentifier}}\",\n  \"password\": \"{{userPassword}}\"\n}"
             },
             "url": "{{baseUrl}}/auth/login",
             "description": "Connecte l'utilisateur et stocke automatiquement le token dans la variable de collection token."
@@ -131,7 +151,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"identifier\": \"admin@example.com\",\n  \"password\": \"motdepasse123\"\n}"
+              "raw": "{\n  \"identifier\": \"{{adminIdentifier}}\",\n  \"password\": \"{{adminPassword}}\"\n}"
             },
             "url": "{{baseUrl}}/auth/login",
             "description": "Connecte un administrateur et stocke automatiquement le JWT dans adminToken."
@@ -145,11 +165,31 @@
                   "var json = pm.response.json();",
                   "if (json && json.data && json.data.token) {",
                   "    pm.collectionVariables.set('adminToken', json.data.token);",
+                  "    pm.environment.set('adminToken', json.data.token);",
+                  "}",
+                  "if (json && json.data && json.data.user && json.data.user.id) {",
+                  "    pm.collectionVariables.set('userId', String(json.data.user.id));",
+                  "    pm.environment.set('userId', String(json.data.user.id));",
                   "}"
                 ]
               }
             }
           ],
+          "response": []
+        },
+        {
+          "name": "Me With Admin Token",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/auth/me",
+            "description": "Verifie l'identite et les permissions du compte admin courant."
+          },
           "response": []
         },
         {
@@ -179,6 +219,36 @@
             ],
             "url": "{{baseUrl}}/auth/logout",
             "description": "Deconnecte l'utilisateur courant."
+          },
+          "response": []
+        },
+        {
+          "name": "Logout Admin",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/auth/logout",
+            "description": "Deconnecte la session admin courante."
+          },
+          "response": []
+        },
+        {
+          "name": "Admin Bootstrap",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/admin/bootstrap?log_limit=5",
+            "description": "Charge en une fois les donnees principales du dashboard admin."
           },
           "response": []
         }
@@ -247,6 +317,7 @@
                   "var json = pm.response.json();",
                   "if (json && json.data && json.data.id) {",
                   "    pm.collectionVariables.set('userId', String(json.data.id));",
+                  "    pm.environment.set('userId', String(json.data.id));",
                   "}"
                 ]
               }
@@ -380,6 +451,7 @@
                   "var json = pm.response.json();",
                   "if (json && json.data && json.data.id) {",
                   "    pm.collectionVariables.set('roleId', String(json.data.id));",
+                  "    pm.environment.set('roleId', String(json.data.id));",
                   "}"
                 ]
               }
@@ -513,11 +585,31 @@
                   "var json = pm.response.json();",
                   "if (json && json.data && json.data.plain_key) {",
                   "    pm.collectionVariables.set('apiKey', json.data.plain_key);",
+                  "    pm.environment.set('apiKey', json.data.plain_key);",
+                  "}",
+                  "if (json && json.data && json.data.api_key && json.data.api_key.id) {",
+                  "    pm.collectionVariables.set('apiKeyId', String(json.data.api_key.id));",
+                  "    pm.environment.set('apiKeyId', String(json.data.api_key.id));",
                   "}"
                 ]
               }
             }
           ],
+          "response": []
+        },
+        {
+          "name": "Delete API Key",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api-keys/{{apiKeyId}}",
+            "description": "Revoque une cle API a partir de son id."
+          },
           "response": []
         },
         {
@@ -532,6 +624,26 @@
             ],
             "url": "{{baseUrl}}/auth/me",
             "description": "Teste la cle API en appelant une route protegee."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Logs",
+      "item": [
+        {
+          "name": "List Logs",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/logs?limit=50",
+            "description": "Liste les evenements d'authentification et d'administration."
           },
           "response": []
         }
